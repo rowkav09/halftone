@@ -48,6 +48,14 @@ export type GeneratedArt = {
   background: string;
 };
 
+export type TextArtStyle = {
+  fontWeight: number;
+  italic: boolean;
+  scaleX: number;
+  skew: number;
+  outline: number;
+};
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 export const sanitizeCustomCharacters = (value: string) => {
@@ -95,30 +103,21 @@ const getGlyphForTone = (tone: number, characters: string[]) => {
   return characters[index] ?? characters[characters.length - 1] ?? " ";
 };
 
-export async function generateArtFromImage(
-  image: HTMLImageElement,
-  options: ArtOptions,
-): Promise<GeneratedArt> {
+const createCanvas = (width: number, height: number) => {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+};
+
+const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: ArtOptions): GeneratedArt => {
   const palette = getPalette(options.palette);
   const characters = getOrderedCharacters(getCharactersForSet(options.characterSet, options.customText));
-  const sourceCanvas = document.createElement("canvas");
-  sourceCanvas.width = image.naturalWidth;
-  sourceCanvas.height = image.naturalHeight;
-
-  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
-  if (!sourceContext) {
-    throw new Error("Canvas 2D context is unavailable.");
-  }
-
-  sourceContext.drawImage(image, 0, 0);
   const { width, height } = sourceCanvas;
-
   const columns = clamp(options.columns, 24, 240);
   const rowHeightRatio = options.packed ? 0.38 : 0.55;
   const rows = Math.max(1, Math.round((height / width) * columns * rowHeightRatio));
-  const sampleCanvas = document.createElement("canvas");
-  sampleCanvas.width = columns;
-  sampleCanvas.height = rows;
+  const sampleCanvas = createCanvas(columns, rows);
   const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
 
   if (!sampleContext) {
@@ -142,7 +141,6 @@ export async function generateArtFromImage(
       const red = sampled[index] ?? 0;
       const green = sampled[index + 1] ?? 0;
       const blue = sampled[index + 2] ?? 0;
-      const alpha = sampled[index + 3] ?? 255;
 
       const tone = options.invert ? luminanceFromRgb(red, green, blue) : 1 - luminanceFromRgb(red, green, blue);
       line += getGlyphForTone(tone, characters);
@@ -161,4 +159,124 @@ export async function generateArtFromImage(
     foreground: palette.foreground,
     background: palette.background,
   };
+};
+
+export async function generateArtFromImage(
+  image: HTMLImageElement,
+  options: ArtOptions,
+): Promise<GeneratedArt> {
+  const sourceCanvas = createCanvas(image.naturalWidth, image.naturalHeight);
+  sourceCanvas.width = image.naturalWidth;
+  sourceCanvas.height = image.naturalHeight;
+
+  const sourceContext = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  if (!sourceContext) {
+    throw new Error("Canvas 2D context is unavailable.");
+  }
+
+  sourceContext.drawImage(image, 0, 0);
+  return generateArtFromCanvas(sourceCanvas, options);
+}
+
+const normalizeBannerText = (value: string) => value.replace(/\s+/g, " ").trim().toUpperCase() || "HALFTONE";
+
+const fitBannerText = (
+  context: CanvasRenderingContext2D,
+  text: string,
+  width: number,
+  height: number,
+  scaleX: number,
+) => {
+  const words = normalizeBannerText(text).split(" ");
+  let fontSize = Math.floor(height * 0.72);
+  let lines = [normalizeBannerText(text)];
+
+  while (fontSize >= 20) {
+    context.font = `${fontSize}px var(--font-sans), sans-serif`;
+    const lineGap = Math.max(6, Math.round(fontSize * 0.15));
+    const limit = width * 0.86 / scaleX;
+
+    const wrapped: string[] = [];
+    if (words.length > 1) {
+      let currentLine = "";
+
+      for (const word of words) {
+        const candidate = currentLine.length > 0 ? `${currentLine} ${word}` : word;
+        if (context.measureText(candidate).width <= limit) {
+          currentLine = candidate;
+        } else {
+          if (currentLine.length > 0) {
+            wrapped.push(currentLine);
+          }
+          currentLine = word;
+        }
+      }
+
+      if (currentLine.length > 0) {
+        wrapped.push(currentLine);
+      }
+    } else {
+      wrapped.push(words[0] ?? "HALFTONE");
+    }
+
+    const widest = wrapped.reduce((maxWidth, line) => Math.max(maxWidth, context.measureText(line).width), 0) * scaleX;
+    const totalHeight = wrapped.length * fontSize + Math.max(0, wrapped.length - 1) * lineGap;
+
+    if (widest <= width * 0.86 && totalHeight <= height * 0.72) {
+      lines = wrapped;
+      break;
+    }
+
+    fontSize -= 2;
+  }
+
+  return { fontSize, lines };
+};
+
+export async function generateArtFromText(
+  text: string,
+  options: ArtOptions,
+  style: TextArtStyle,
+): Promise<GeneratedArt> {
+  const sourceWidth = clamp(Math.round(options.columns * 15), 960, 2400);
+  const sourceHeight = Math.round(sourceWidth / 4.25);
+  const sourceCanvas = createCanvas(sourceWidth, sourceHeight);
+  const context = sourceCanvas.getContext("2d", { willReadFrequently: true });
+
+  if (!context) {
+    throw new Error("Canvas 2D context is unavailable.");
+  }
+
+  context.fillStyle = "#f4f8ff";
+  context.fillRect(0, 0, sourceWidth, sourceHeight);
+  context.fillStyle = "#050810";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+
+  const { fontSize, lines } = fitBannerText(context, text, sourceWidth, sourceHeight, style.scaleX);
+  const lineGap = Math.max(6, Math.round(fontSize * 0.15));
+  const totalHeight = lines.length * fontSize + Math.max(0, lines.length - 1) * lineGap;
+  const startY = sourceHeight / 2 - totalHeight / 2 + fontSize / 2;
+
+  context.save();
+  context.translate(sourceWidth / 2, sourceHeight / 2);
+  context.transform(style.scaleX, 0, Math.tan((style.skew * Math.PI) / 180), 1, 0, 0);
+  context.translate(-sourceWidth / 2, -sourceHeight / 2);
+  context.font = `${style.italic ? "italic " : ""}${style.fontWeight} ${fontSize}px var(--font-sans), sans-serif`;
+
+  lines.forEach((line, index) => {
+    const y = startY + index * (fontSize + lineGap);
+    if (style.outline > 0) {
+      context.strokeStyle = "rgba(7, 11, 20, 0.95)";
+      context.lineWidth = style.outline;
+      context.strokeText(line, sourceWidth / 2, y);
+    }
+
+    context.fillText(line, sourceWidth / 2, y);
+  });
+
+  context.restore();
+
+  return generateArtFromCanvas(sourceCanvas, options);
 }

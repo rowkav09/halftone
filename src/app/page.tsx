@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CHARACTER_SETS,
+  type GeneratedArt,
   PALETTES,
   RESOLUTION_PRESETS,
   type ColorMode,
@@ -10,7 +11,9 @@ import {
   type PaletteId,
   type ResolutionKey,
   generateArtFromImage,
+  generateArtFromText,
   sanitizeCustomCharacters,
+  type TextArtStyle,
 } from "@/lib/art";
 
 const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: string }> = [
@@ -26,17 +29,35 @@ const RESOLUTION_OPTIONS: ResolutionKey[] = ["low", "medium", "high", "ultra", "
 
 const PLACEHOLDER_PRESETS = ["Terminal", "Cyberpunk", "Retro", "Medieval", "Minimal"];
 
+const BANNER_STYLE_VARIANTS: TextArtStyle[] = Array.from({ length: 50 }, (_, index) => {
+  const shapeVariants = [
+    { scaleX: 0.92, skew: -8, outline: 2 },
+    { scaleX: 0.96, skew: -5, outline: 1 },
+    { scaleX: 1.0, skew: -3, outline: 2 },
+    { scaleX: 1.04, skew: 0, outline: 0 },
+    { scaleX: 1.08, skew: 4, outline: 1 },
+    { scaleX: 0.9, skew: 7, outline: 2 },
+    { scaleX: 0.98, skew: -1, outline: 1 },
+    { scaleX: 1.06, skew: 2, outline: 0 },
+    { scaleX: 0.94, skew: -6, outline: 2 },
+    { scaleX: 1.02, skew: 5, outline: 1 },
+  ];
+  const weightVariants = [500, 600, 700, 800, 900] as const;
+  const shape = shapeVariants[Math.floor(index / 5)] ?? shapeVariants[0];
+
+  return {
+    fontWeight: weightVariants[index % weightVariants.length] ?? 700,
+    italic: index % 2 === 1,
+    scaleX: shape.scaleX,
+    skew: shape.skew,
+    outline: shape.outline,
+  };
+});
+
+const BANNER_ROTATION_MS = 333;
+
 const clampResolution = (value: number) => Math.min(4, Math.max(0, value));
 const USAGE_ENDPOINT = "/api/uses";
-
-const ASCII_LOGO = [
-  "██╗  ██╗ █████╗ ██╗     ████████╗ ██████╗ ███╗   ██╗████████╗ ██████╗ ███╗   ██╗███████╗",
-  "██║  ██║██╔══██╗██║     ╚══██╔══╝██╔═══██╗████╗  ██║╚══██╔══╝██╔═══██╗████╗  ██║██╔════╝",
-  "███████║███████║██║        ██║   ██║   ██║██╔██╗ ██║   ██║   ██║   ██║██╔██╗ ██║█████╗  ",
-  "██╔══██║██╔══██║██║        ██║   ██║   ██║██║╚██╗██║   ██║   ██║   ██║██║╚██╗██║██╔══╝  ",
-  "██║  ██║██║  ██║███████╗   ██║   ╚██████╔╝██║ ╚████║   ██║   ╚██████╔╝██║ ╚████║███████╗",
-  "╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚══════╝",
-];
 
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +68,9 @@ export default function Home() {
 
   const [fileName, setFileName] = useState<string>("");
   const [status, setStatus] = useState<string>("Drop an image to start turning it into text art.");
+  const [bannerText, setBannerText] = useState<string>("HALFTONE");
+  const [bannerStyleIndex, setBannerStyleIndex] = useState<number>(0);
+  const [bannerArt, setBannerArt] = useState<GeneratedArt | null>(null);
   const [characterSet, setCharacterSet] = useState<CharacterSetId>("ascii");
   const [customText, setCustomText] = useState<string>("ROWAN");
   const [resolutionIndex, setResolutionIndex] = useState<number>(1);
@@ -63,6 +87,7 @@ export default function Home() {
 
   const selectedResolution = RESOLUTION_OPTIONS[clampResolution(resolutionIndex)];
   const paletteDefinition = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
+  const bannerLabel = useMemo(() => bannerText.trim().toUpperCase() || "HALFTONE", [bannerText]);
 
   useEffect(() => {
     let cancelled = false;
@@ -89,6 +114,56 @@ export default function Home() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    setBannerStyleIndex(0);
+  }, [bannerLabel, characterSet, customText, resolutionIndex, invert, palette, colorMode]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setBannerStyleIndex((value) => (value + 1) % BANNER_STYLE_VARIANTS.length);
+    }, BANNER_ROTATION_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const renderBanner = async () => {
+      try {
+        const generated = await generateArtFromText(
+          bannerLabel,
+          {
+            columns: RESOLUTION_PRESETS[selectedResolution].columns,
+            characterSet,
+            customText,
+            invert,
+            palette,
+            colorMode,
+            packed: selectedResolution === "packed",
+          },
+          BANNER_STYLE_VARIANTS[bannerStyleIndex] ?? BANNER_STYLE_VARIANTS[0],
+        );
+
+        if (!cancelled) {
+          setBannerArt(generated);
+        }
+      } catch {
+        if (!cancelled) {
+          setBannerArt(null);
+        }
+      }
+    };
+
+    void renderBanner();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bannerLabel, bannerStyleIndex, characterSet, customText, selectedResolution, invert, palette, colorMode]);
 
   const incrementUsage = async () => {
     try {
@@ -252,9 +327,15 @@ export default function Home() {
             <span>Halftone</span>
             <span>{renderCount} uses</span>
           </div>
-          <pre className="ascii-logo overflow-hidden text-[7px] leading-[0.95] text-emerald-200/80 sm:text-[8px]">
-            {ASCII_LOGO.join("\n")}
-          </pre>
+          <div className="rounded-[1rem] border border-white/10 bg-black/60 px-3 py-3">
+            <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.28em] text-slate-500">
+              <span>Word banner</span>
+              <span>{bannerStyleIndex + 1}/50</span>
+            </div>
+            <pre className="overflow-hidden text-[7px] leading-[0.95] text-emerald-200/80 sm:text-[8px]">
+              {bannerArt ? bannerArt.lines.join("\n") : bannerLabel}
+            </pre>
+          </div>
         </header>
 
         <div className="grid flex-1 gap-4 xl:grid-cols-[280px_minmax(0,1fr)_280px]">
@@ -321,6 +402,19 @@ export default function Home() {
                 </div>
                 <p className="font-mono text-[11px] tracking-[0.2em] text-slate-500">{fileName || "no file"}</p>
               </div>
+            </div>
+
+            <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3">
+              <div>
+                <h3 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Banner text</h3>
+                <p className="mt-1 text-xs text-slate-400">This word cycles through 50 ASCII styles.</p>
+              </div>
+              <input
+                value={bannerText}
+                onChange={(event) => setBannerText(event.target.value)}
+                className="w-full rounded-xl border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none placeholder:text-slate-600 focus:border-emerald-300/40"
+                placeholder="HALFTONE"
+              />
             </div>
 
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3">
