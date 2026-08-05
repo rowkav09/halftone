@@ -14,7 +14,7 @@ import {
   generateArtFromImage,
   sanitizeCustomCharacters,
 } from "@/lib/art";
-import { CUSTOM_TEXT_STYLES, generateCustomTextArt } from "@/lib/customText";
+import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, generateCustomTextArt } from "@/lib/customText";
 
 const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: string }> = [
   { id: "ascii", label: "ASCII", sample: "@#%*+=-:." },
@@ -41,6 +41,7 @@ export default function Home() {
   const [customGlyphs, setCustomGlyphs] = useState("ROWAN");
   const [textValue, setTextValue] = useState("HELLO");
   const [textStyleIndex, setTextStyleIndex] = useState(0);
+  const [textOutputFormat, setTextOutputFormat] = useState<TextOutputFormat["id"]>("ascii");
   const [resolutionIndex, setResolutionIndex] = useState(1);
   const [invert, setInvert] = useState(false);
   const [palette, setPalette] = useState<PaletteId>("bw");
@@ -114,7 +115,7 @@ export default function Home() {
     setIsRendering(true);
     try {
       const generated = mode === "text"
-        ? generateCustomTextArt(textValue, activeTextStyle)
+        ? generateCustomTextArt(textValue, activeTextStyle, textOutputFormat)
         : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setArtLines(generated.lines);
       setColumns(generated.columns);
@@ -127,7 +128,7 @@ export default function Home() {
     } finally {
       setIsRendering(false);
     }
-  }, [activeTextStyle, characterSet, colorMode, customGlyphs, drawGeneratedArt, incrementUsage, invert, mode, palette, selectedResolution, textValue]);
+  }, [activeTextStyle, characterSet, colorMode, customGlyphs, drawGeneratedArt, incrementUsage, invert, mode, palette, selectedResolution, textOutputFormat, textValue]);
 
   useEffect(() => {
     if (mode !== "text" && !imageReady) return;
@@ -181,7 +182,7 @@ export default function Home() {
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3">
               <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Create from</h2>
               <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setMode("image")} className={`rounded-xl border px-3 py-2 text-sm ${mode === "image" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Image</button><button type="button" onClick={() => setMode("text")} className={`rounded-xl border px-3 py-2 text-sm ${mode === "text" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Text</button></div>
-              {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-xl border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><div className="grid grid-cols-2 gap-2">{CUSTOM_TEXT_STYLES.map((style, index) => <button key={style.id} type="button" onClick={() => setTextStyleIndex(index)} className={`rounded-lg border px-2 py-2 text-left text-xs ${textStyleIndex === index ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{style.name}</button>)}</div></> : null}
+              {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-xl border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Output format<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-xl border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><div className="grid grid-cols-2 gap-2">{CUSTOM_TEXT_STYLES.map((style, index) => <button key={style.id} type="button" onClick={() => setTextStyleIndex(index)} className={`rounded-lg border px-2 py-2 text-left text-xs ${textStyleIndex === index ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{style.name}</button>)}</div></> : null}
             </div>
 
             {mode === "image" ? <>

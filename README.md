@@ -1,52 +1,48 @@
 # Halftone
 
-A browser-only image-to-text-art generator built with Next.js, TypeScript, and Tailwind.
+Turn images into character art, or type a phrase to generate copy-ready FIGlet banners.
 
-## What it does
+## Features
 
-- Choose whether to generate from an uploaded image or typed text.
-- Upload an image by drag and drop or file picker.
-- Choose a character set: ASCII, Braille, Blocks, Unicode, or custom glyphs.
-- Adjust resolution, inversion, and colour or monochrome output, then preview the result live.
-- Export the generated art as PNG or TXT.
-- Pick a monochrome ink theme: Black & White, Green Terminal, Amber CRT, or Blue.
-- Watch an independent ASCII `HALFTONE` wordmark rotate through 50 treatments.
-- Create large ASCII banners from exactly the words you enter, with Banner, Block, Outline, Shadow, Retro, Cyber, Glitch, Terminal, Heavy, and Minimal styles.
+- Image mode with ASCII, Braille, Blocks, Unicode, and custom glyph sets.
+- Text mode with Standard, Big, Block, Bubble, Digital, Doom, Ghost, Graffiti, Lean, Shadow, Slant, and Small FIGlet styles.
+- Output formatting for plain ASCII, `//`, `/* */`, SQL, JavaDoc, Bash, SGML, Echo, Python, and Batch comments.
+- Palette-aware text output in Black & White, Green Terminal, Amber CRT, and Blue.
+- PNG and TXT export for image art; TXT export for text art.
+- A live generations badge backed by Upstash Redis.
 
-## Example outputs
+## Live examples
 
-ASCII ramp:
+Generated on the live Halftone site.
+
+### Graffiti — `HALFTONE`
 
 ```txt
-@%#*+=-:.
-%#*+=-:.. 
-*+=-::..  
-=-::..    
+  ___ ___    _____  .____   ______________________________    _______  ___________
+ /   |   \  /  _  \ |    |  \_   _____/\__    ___/\_____  \   \      \ \_   _____/
+/    ~    \/  /_\  \|    |   |    __)    |    |    /   |   \  /   |   \ |    __)_
+\    Y    /    |    \    |___|     \     |    |   /    |    \/    |    \|        \
+ \___|_  /\____|__  /_______ \___  /     |____|   \_______  /\____|__  /_______  /
+       \/         \/        \/   \/                       \/         \/        \/
 ```
 
-Braille ramp:
+### Big — `CREATE`
 
 ```txt
-⣿⣷⣶⣤⣄⣀
-⣷⣶⣤⣄⣀  
-⣶⣤⣄⣀    
+   _____ _____  ______       _______ ______
+  / ____|  __ \|  ____|   /\|__   __|  ____|
+ | |    | |__) | |__     /  \  | |  | |__
+ | |    |  _  /|  __|   / /\ \ | |  |  __|
+ | |____| | \ \| |____ / ____ \| |  | |____
+  \_____|_|  \_\______/_/    \_\_|  |_|______|
 ```
 
-Text banner:
+### Digital — `PIXELS`
 
 ```txt
- #   # ##### #     #      ###
- #   # #     #     #     #   #
- ##### ####  #     #     #   #
- #   # #     #     #     #   #
- #   # ##### ##### #####  ###
-```
-
-Unicode dense output:
-
-```txt
-▁▂▃▄▅▆▇█
-░▒▓█▇▆▅▄
+ +-+-+-+-+-+-+
+ |P|I|X|E|L|S|
+ +-+-+-+-+-+-+
 ```
 
 

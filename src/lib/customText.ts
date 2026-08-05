@@ -14,6 +14,10 @@ import Small from "figlet/fonts/Small";
 import Standard from "figlet/fonts/Standard";
 
 export type CustomTextStyle = { id: string; name: string; font: string };
+export type TextOutputFormat = {
+  id: "ascii" | "slash" | "slashStar" | "sql" | "javaDoc" | "bash" | "bashMultiline" | "sgml" | "echo" | "python" | "batch";
+  name: string;
+};
 
 export const CUSTOM_TEXT_STYLES: readonly CustomTextStyle[] = [
   { id: "standard", name: "Standard", font: "Standard" },
@@ -30,6 +34,20 @@ export const CUSTOM_TEXT_STYLES: readonly CustomTextStyle[] = [
   { id: "small", name: "Small", font: "Small" },
 ];
 
+export const TEXT_OUTPUT_FORMATS: readonly TextOutputFormat[] = [
+  { id: "ascii", name: "ASCII Art" },
+  { id: "slash", name: "Single Line Double Slash · //" },
+  { id: "slashStar", name: "Slash Star · /* */" },
+  { id: "sql", name: "SQL Comment · --" },
+  { id: "javaDoc", name: "JavaDoc · /** */" },
+  { id: "bash", name: "Bash Comment · #" },
+  { id: "bashMultiline", name: "Bash Multiline · : ' '" },
+  { id: "sgml", name: "SGML Comment · <!-- -->" },
+  { id: "echo", name: "Echo Commands" },
+  { id: "python", name: "Python Multiline · \"\"\"" },
+  { id: "batch", name: "Batch · REM" },
+];
+
 let fontsRegistered = false;
 
 const registerFonts = () => {
@@ -38,9 +56,25 @@ const registerFonts = () => {
   fontsRegistered = true;
 };
 
-export const generateFigletArt = (text: string, font: string): GeneratedArt => {
+const formatLines = (lines: string[], format: TextOutputFormat["id"]) => {
+  switch (format) {
+    case "slash": return lines.map((line) => `// ${line}`);
+    case "slashStar": return lines.map((line) => `/* ${line} */`);
+    case "sql": return lines.map((line) => `-- ${line}`);
+    case "javaDoc": return ["/**", ...lines.map((line) => ` * ${line}`), " */"];
+    case "bash": return lines.map((line) => `# ${line}`);
+    case "bashMultiline": return [": '", ...lines, "'"];
+    case "sgml": return ["<!--", ...lines, "-->"];
+    case "echo": return lines.map((line) => `echo \"${line.replaceAll("\"", "\\\"")}\"`);
+    case "python": return ["\"\"\"", ...lines, "\"\"\""];
+    case "batch": return lines.map((line) => `REM ${line}`);
+    default: return lines;
+  }
+};
+
+export const generateFigletArt = (text: string, font: string, format: TextOutputFormat["id"] = "ascii"): GeneratedArt => {
   registerFonts();
-  const lines = figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n");
+  const lines = formatLines(figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n"), format);
   return {
     lines,
     colors: lines.map((line) => Array.from(line, () => "#c8ffbf")),
@@ -51,4 +85,4 @@ export const generateFigletArt = (text: string, font: string): GeneratedArt => {
   };
 };
 
-export const generateCustomTextArt = (text: string, style: CustomTextStyle) => generateFigletArt(text, style.font);
+export const generateCustomTextArt = (text: string, style: CustomTextStyle, format: TextOutputFormat["id"] = "ascii") => generateFigletArt(text, style.font, format);
