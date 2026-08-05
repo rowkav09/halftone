@@ -49,21 +49,45 @@ button:not(:disabled):active {
   background-size: 22px 22px;
 }
 
-.logo-boot::after {
+.ascii-intro::before {
   content: "";
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(118, 255, 148, 0.06) 2px 3px);
-  opacity: 0;
+  background:
+    radial-gradient(circle at center, rgba(91, 255, 164, 0.12), transparent 38%),
+    repeating-linear-gradient(0deg, transparent 0 3px, rgba(118, 255, 148, 0.065) 3px 4px);
 }
 
-.logo-boot.is-booting::after {
-  animation: ascii-scan 450ms linear infinite;
-  opacity: 1;
+.ascii-intro::after {
+  content: "";
+  position: absolute;
+  inset: -20% 0 auto;
+  height: 20%;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(118, 255, 148, 0.16), transparent);
+  animation: ascii-scan 700ms linear infinite;
 }
 
 @keyframes ascii-scan {
-  from { transform: translateY(-3px); }
-  to { transform: translateY(3px); }
+  from { transform: translateY(0); }
+  to { transform: translateY(600%); }
+}
+
+.ascii-intro-signal {
+  animation: ascii-signal 220ms steps(2, end) infinite;
+  text-shadow: 0 0 14px rgba(118, 255, 148, 0.42);
+}
+
+@keyframes ascii-signal {
+  0%, 100% { transform: translateX(0); opacity: 1; }
+  45% { transform: translateX(1px); opacity: 0.9; }
+  55% { transform: translateX(-1px); opacity: 0.98; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ascii-intro::after,
+  .ascii-intro-signal {
+    animation: none;
+  }
 }
