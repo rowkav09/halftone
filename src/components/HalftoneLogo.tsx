@@ -12,5 +12,5 @@ export function HalftoneLogo() {
     return () => window.clearInterval(timer);
   }, []);
 
-  return style ? <pre className="overflow-hidden py-1 font-mono text-[5px] leading-[0.78] text-emerald-200 sm:text-[7px]">{generateLogoArt(style).join("\n")}</pre> : null;
+  return style ? <pre className="h-[5.5rem] overflow-hidden py-1 font-mono text-[6px] leading-[0.82] text-emerald-200 sm:text-[8px]">{generateLogoArt(style).join("\n")}</pre> : null;
 }

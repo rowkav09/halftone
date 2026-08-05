@@ -1,20 +1,14 @@
-import { createAsciiBanner, type AsciiBannerStyle } from "@/lib/asciiText";
+import { CUSTOM_TEXT_STYLES, generateFigletArt } from "@/lib/customText";
 
-export type LogoStyle = AsciiBannerStyle & { id: string };
+export type LogoStyle = { id: string; font: string };
 
 export const LOGO_TEXT = "HALFTONE";
 export const LOGO_ROTATION_MS = 1500;
 
-const fills = ["#", "@", "%", "&", "X", "O", "*", "+", "=", "/"];
-
-/** Independent ASCII treatments for the fixed HALFTONE brand wordmark. */
+/** Fixed-word FIGlet treatments, independent of every generator setting. */
 export const LOGO_STYLES: readonly LogoStyle[] = Array.from({ length: 50 }, (_, index) => ({
   id: `logo-${index + 1}`,
-  fill: fills[index % fills.length] ?? "#",
-  outline: Math.floor(index / 10) === 3,
-  shadow: Math.floor(index / 10) === 4 ? "." : undefined,
-  slant: Math.floor(index / 10) === 2,
-  spacing: index % 2,
+  font: CUSTOM_TEXT_STYLES[index % CUSTOM_TEXT_STYLES.length]?.font ?? "Standard",
 }));
 
-export const generateLogoArt = (style: LogoStyle) => createAsciiBanner(LOGO_TEXT, style, 80);
+export const generateLogoArt = (style: LogoStyle) => generateFigletArt(LOGO_TEXT, style.font).lines;
