@@ -22,11 +22,11 @@ const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: 
   { id: "custom", label: "Custom text", sample: "ROWAN" },
 ];
 
-const RESOLUTION_OPTIONS: ResolutionKey[] = ["low", "medium", "high", "ultra"];
+const RESOLUTION_OPTIONS: ResolutionKey[] = ["low", "medium", "high", "ultra", "packed"];
 
 const PLACEHOLDER_PRESETS = ["Terminal", "Cyberpunk", "Retro", "Medieval", "Minimal"];
 
-const clampResolution = (value: number) => Math.min(3, Math.max(0, value));
+const clampResolution = (value: number) => Math.min(4, Math.max(0, value));
 const USAGE_ENDPOINT = "/api/uses";
 
 const ASCII_LOGO = [
@@ -151,6 +151,7 @@ export default function Home() {
         invert,
         palette,
         colorMode,
+        packed: selectedResolution === "packed",
       });
 
       setArtLines(generated.lines);
@@ -163,10 +164,12 @@ export default function Home() {
         throw new Error("Canvas 2D context is unavailable.");
       }
 
-      const fontSize = 16;
-      const padding = 20;
-      const lineHeight = 20;
-      canvas.width = generated.columns * 12 + padding * 2;
+      const isPacked = selectedResolution === "packed";
+      const fontSize = isPacked ? 11 : 16;
+      const padding = isPacked ? 12 : 20;
+      const glyphAdvance = isPacked ? 7 : 12;
+      const lineHeight = isPacked ? 11 : 20;
+      canvas.width = generated.columns * glyphAdvance + padding * 2;
       canvas.height = generated.rows * lineHeight + padding * 2;
 
       context.fillStyle = generated.background;
@@ -177,7 +180,7 @@ export default function Home() {
       generated.lines.forEach((line, index) => {
         Array.from(line).forEach((glyph, glyphIndex) => {
           context.fillStyle = colorMode === "original" ? generated.colors[index]?.[glyphIndex] ?? generated.foreground : generated.foreground;
-          context.fillText(glyph, padding + glyphIndex * 12, padding + index * lineHeight);
+          context.fillText(glyph, padding + glyphIndex * glyphAdvance, padding + index * lineHeight);
         });
       });
 
@@ -357,7 +360,7 @@ export default function Home() {
               <input
                 type="range"
                 min={0}
-                max={3}
+                max={4}
                 step={1}
                 value={resolutionIndex}
                 onChange={(event) => setResolutionIndex(Number(event.target.value))}

@@ -10,13 +10,14 @@ export type CharacterSetId = keyof typeof CHARACTER_SETS | "custom";
 
 export type ColorMode = "original" | "palette";
 
-export type ResolutionKey = "low" | "medium" | "high" | "ultra";
+export type ResolutionKey = "low" | "medium" | "high" | "ultra" | "packed";
 
 export const RESOLUTION_PRESETS: Record<ResolutionKey, { columns: number; label: string }> = {
   low: { columns: 56, label: "Low" },
   medium: { columns: 84, label: "Medium" },
   high: { columns: 120, label: "High" },
   ultra: { columns: 164, label: "Ultra" },
+  packed: { columns: 240, label: "Packed" },
 };
 
 export const PALETTES = [
@@ -35,6 +36,7 @@ export type ArtOptions = {
   invert: boolean;
   palette: PaletteId;
   colorMode: ColorMode;
+  packed: boolean;
 };
 
 export type GeneratedArt = {
@@ -112,7 +114,7 @@ export async function generateArtFromImage(
   const { width, height } = sourceCanvas;
 
   const columns = clamp(options.columns, 24, 240);
-  const rowHeightRatio = 0.55;
+  const rowHeightRatio = options.packed ? 0.38 : 0.55;
   const rows = Math.max(1, Math.round((height / width) * columns * rowHeightRatio));
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = columns;
