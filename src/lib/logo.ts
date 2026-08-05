@@ -1,14 +1,38 @@
-import { CUSTOM_TEXT_STYLES, generateFigletArt } from "@/lib/customText";
+import { generateFigletArt } from "@/lib/customText";
 
 export type LogoStyle = { id: string; font: string };
 
 export const LOGO_TEXT = "HALFTONE";
 export const LOGO_ROTATION_MS = 1500;
 
-/** Fixed-word FIGlet treatments, independent of every generator setting. */
-export const LOGO_STYLES: readonly LogoStyle[] = Array.from({ length: 50 }, (_, index) => ({
-  id: `logo-${index + 1}`,
-  font: CUSTOM_TEXT_STYLES[index % CUSTOM_TEXT_STYLES.length]?.font ?? "Standard",
+/**
+ * Curated for the fixed header frame. Larger FIGlet fonts remain available in
+ * the text generator, but would crop on narrower screens when used as a logo.
+ */
+const LOGO_FONTS = [
+  "3x5",
+  "ANSI Regular",
+  "Banner",
+  "Standard",
+  "Big",
+  "Bubble",
+  "Bulbhead",
+  "Chunky",
+  "Cyberlarge",
+  "Doom",
+  "Fun Faces",
+  "Ogre",
+  "Old Banner",
+  "Rectangles",
+  "Shadow",
+  "Slant",
+  "Small",
+  "The Edge",
+] as const;
+
+export const LOGO_STYLES: readonly LogoStyle[] = LOGO_FONTS.map((font) => ({
+  id: `logo-${font.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
+  font,
 }));
 
 export const generateLogoArt = (style: LogoStyle) => generateFigletArt(LOGO_TEXT, style.font).lines;

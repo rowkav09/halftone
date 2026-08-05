@@ -34,6 +34,7 @@ const USAGE_ENDPOINT = "/api/uses";
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileUrlRef = useRef<string | null>(null);
+  const copyTimerRef = useRef<number | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
@@ -49,6 +50,7 @@ export default function Home() {
   const [palette, setPalette] = useState<PaletteId>("bw");
   const [colorMode, setColorMode] = useState<ColorMode>("colour");
   const [renderCount, setRenderCount] = useState(0);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [artLines, setArtLines] = useState<string[]>([]);
   const [columns, setColumns] = useState(0);
   const [rows, setRows] = useState(0);
@@ -72,7 +74,10 @@ export default function Home() {
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => () => { if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current); }, []);
+  useEffect(() => () => {
+    if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
+    if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+  }, []);
 
   const incrementUsage = useCallback(async () => {
     try {
@@ -166,6 +171,22 @@ export default function Home() {
     URL.revokeObjectURL(link.href);
   };
 
+  const copyText = useCallback(async () => {
+    if (!artLines.length) return;
+
+    try {
+      await navigator.clipboard.writeText(artLines.join("\n"));
+      setCopyState("copied");
+      setStatus("Copied ASCII text to clipboard.");
+    } catch {
+      setCopyState("failed");
+      setStatus("Could not copy automatically. Use Export TXT instead.");
+    }
+
+    if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
+  }, [artLines]);
+
   return (
     <main className="min-h-screen bg-black text-slate-100">
       <div className="mx-auto flex min-h-screen w-full max-w-[1600px] flex-col gap-4 px-3 py-3 sm:px-4 lg:px-5">
@@ -216,6 +237,7 @@ export default function Home() {
             <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3">
               <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2>
               {mode === "image" ? <button type="button" disabled={!artLines.length} onClick={() => { const canvas = previewCanvasRef.current; if (!canvas) return; const link = document.createElement("a"); link.href = canvas.toDataURL("image/png"); link.download = `${exportName}.png`; link.click(); }} className="w-full rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">Export PNG</button> : null}
+              <button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button>
               <button type="button" disabled={!artLines.length} onClick={exportText} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">Export TXT</button>
             </div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">
