@@ -1,6 +1,6 @@
 [![Total generations](https://img.shields.io/endpoint?url=https%3A%2F%2Fhalftone-black.vercel.app%2Fapi%2Fbadge)](https://halftone-black.vercel.app/)
 
-```txt
+```
 oooo                  oooo   .o88o.     .                                   
 `888                  `888   888 `"   .o8                                   
  888 .oo.    .oooo.    888  o888oo  .o888oo  .ooooo.  ooo. .oo.    .ooooo.  
@@ -29,7 +29,7 @@ Generated on the live [Halftone site](https://halftone-black.vercel.app/).
 
 ### Alligator — `HALFTONE`
 
-```txt
+```
       :::    :::     :::     :::        :::::::::: ::::::::::: ::::::::  ::::    ::: :::::::::: 
      :+:    :+:   :+: :+:   :+:        :+:            :+:    :+:    :+: :+:+:   :+: :+:         
     +:+    +:+  +:+   +:+  +:+        +:+            +:+    +:+    +:+ :+:+:+  +:+ +:+          
@@ -40,7 +40,7 @@ Generated on the live [Halftone site](https://halftone-black.vercel.app/).
 ```
 ### Banner 3D — `CREATE`
 
-```txt
+```
 :'######::'########::'########::::'###::::'########:'########:
 '##... ##: ##.... ##: ##.....::::'## ##:::... ##..:: ##.....::
  ##:::..:: ##:::: ##: ##::::::::'##:. ##::::: ##:::: ##:::::::
