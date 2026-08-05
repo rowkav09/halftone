@@ -5,6 +5,7 @@ import { generateLogoArt, LOGO_ROTATION_MS, LOGO_STYLES } from "@/lib/logo";
 
 const BOOT_TIMELINE = [250, 650, 1100, 1650, 2300] as const;
 const INTRO_STYLE = LOGO_STYLES.find((style) => style.font === "Standard") ?? LOGO_STYLES[0];
+const DEFAULT_STYLE_INDEX = Math.max(0, LOGO_STYLES.findIndex((style) => style.font === "Standard"));
 const SIGNAL_GLYPHS = Array.from("01.:;<>/\\");
 
 const signalCharacter = (column: number, row: number) => SIGNAL_GLYPHS[Math.abs((column * 17 + row * 31 + column * row * 7) % SIGNAL_GLYPHS.length)] ?? ".";
@@ -22,7 +23,7 @@ const createIntroFrame = (stage: number, art: string[]) => {
 };
 
 export function HalftoneLogo() {
-  const [styleIndex, setStyleIndex] = useState(0);
+  const [styleIndex, setStyleIndex] = useState(DEFAULT_STYLE_INDEX);
   const [bootStage, setBootStage] = useState(0);
   const style = LOGO_STYLES[styleIndex] ?? LOGO_STYLES[0];
   const logoArt = useMemo(() => style ? generateLogoArt(style) : [], [style]);
@@ -52,7 +53,7 @@ export function HalftoneLogo() {
       </div>
     </div> : null}
     <div className={`relative h-[5.5rem] overflow-hidden transition-opacity duration-300 ${isBooting ? "opacity-0" : "opacity-100"}`}>
-      <pre className="h-full py-1 font-mono text-[6px] leading-[0.82] text-emerald-200 sm:text-[8px]">{logoArt.join("\n")}</pre>
+      <pre className="h-full py-1 font-mono text-[clamp(4px,1.15vw,8px)] leading-[0.82] text-emerald-200">{logoArt.join("\n")}</pre>
     </div>
   </>;
 }

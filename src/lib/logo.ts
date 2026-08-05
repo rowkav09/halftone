@@ -10,24 +10,13 @@ export const LOGO_ROTATION_MS = 1500;
  * the text generator, but would crop on narrower screens when used as a logo.
  */
 const LOGO_FONTS = [
-  "3x5",
   "ANSI Regular",
   "Banner",
-  "Standard",
-  "Big",
-  "Bubble",
-  "Bulbhead",
-  "Chunky",
-  "Cyberlarge",
-  "Doom",
-  "Fun Faces",
-  "Ogre",
-  "Old Banner",
-  "Rectangles",
-  "Shadow",
+  "Roman",
   "Slant",
+  "Standard",
+  "Rectangles",
   "Small",
-  "The Edge",
 ] as const;
 
 export const LOGO_STYLES: readonly LogoStyle[] = LOGO_FONTS.map((font) => ({
