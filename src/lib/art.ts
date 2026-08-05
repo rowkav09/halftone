@@ -13,15 +13,8 @@ export type CharacterSetId = keyof typeof CHARACTER_SETS | "custom";
 
 export type ColorMode = "colour" | "monochrome";
 
-export type ResolutionKey = "low" | "medium" | "high" | "ultra" | "packed";
-
-export const RESOLUTION_PRESETS: Record<ResolutionKey, { columns: number; label: string }> = {
-  low: { columns: 56, label: "Low" },
-  medium: { columns: 84, label: "Medium" },
-  high: { columns: 120, label: "High" },
-  ultra: { columns: 164, label: "Ultra" },
-  packed: { columns: 240, label: "Packed" },
-};
+export const COLOR_COUNTS = [0, 2, 4, 8, 16] as const;
+export type ColorCount = (typeof COLOR_COUNTS)[number];
 
 export const PALETTES = [
   { id: "bw", name: "Black & White", foreground: "#e8edf2", background: "#070b14", accent: "#a9b4c2" },
@@ -39,7 +32,7 @@ export type ArtOptions = {
   invert: boolean;
   palette: PaletteId;
   colorMode: ColorMode;
-  packed: boolean;
+  colorCount: ColorCount;
 };
 
 export type GeneratedArt = {
@@ -84,6 +77,77 @@ const toReadableColor = (red: number, green: number, blue: number, tone: number)
     green + (242 - green) * lift,
     blue + (255 - blue) * lift,
   );
+};
+
+type Rgb = readonly [number, number, number];
+
+const squaredDistance = (first: Rgb, second: Rgb) => {
+  const red = first[0] - second[0];
+  const green = first[1] - second[1];
+  const blue = first[2] - second[2];
+  return red * red + green * green + blue * blue;
+};
+
+const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rgb[] | null => {
+  if (colorCount === 0) return null;
+
+  const samples: Rgb[] = [];
+  const cellCount = sampled.length / 4;
+  const sampleStride = Math.max(1, Math.floor(cellCount / 2400));
+  for (let cell = 0; cell < cellCount; cell += sampleStride) {
+    const index = cell * 4;
+    samples.push([sampled[index] ?? 0, sampled[index + 1] ?? 0, sampled[index + 2] ?? 0]);
+  }
+  if (!samples.length) return null;
+
+  const centers: Rgb[] = [samples[0] ?? [0, 0, 0]];
+  while (centers.length < colorCount) {
+    let candidate = samples[0] ?? [0, 0, 0];
+    let greatestDistance = -1;
+    for (const sample of samples) {
+      const nearest = Math.min(...centers.map((center) => squaredDistance(sample, center)));
+      if (nearest > greatestDistance) {
+        greatestDistance = nearest;
+        candidate = sample;
+      }
+    }
+    centers.push(candidate);
+  }
+
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    const totals = centers.map(() => [0, 0, 0, 0]);
+    for (const sample of samples) {
+      let nearestIndex = 0;
+      let nearestDistance = Infinity;
+      centers.forEach((center, index) => {
+        const distance = squaredDistance(sample, center);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+      const total = totals[nearestIndex];
+      if (total) {
+        total[0] += sample[0];
+        total[1] += sample[1];
+        total[2] += sample[2];
+        total[3] += 1;
+      }
+    }
+    centers.forEach((center, index) => {
+      const total = totals[index];
+      if (total && total[3] > 0) centers[index] = [total[0] / total[3], total[1] / total[3], total[2] / total[3]];
+      else centers[index] = center;
+    });
+  }
+
+  return centers;
+};
+
+const getClosestPaletteColor = (red: number, green: number, blue: number, palette: Rgb[] | null): Rgb => {
+  if (!palette?.length) return [red, green, blue];
+  const color: Rgb = [red, green, blue];
+  return palette.reduce((closest, candidate) => squaredDistance(color, candidate) < squaredDistance(color, closest) ? candidate : closest);
 };
 
 const getOrderedCharacters = (characters: string) => {
@@ -163,7 +227,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const characters = getOrderedCharacters(getCharactersForSet(options.characterSet, options.customText));
   const { width, height } = sourceCanvas;
   const columns = clamp(options.columns, 24, 240);
-  const rowHeightRatio = options.packed ? 0.38 : 0.55;
+  const rowHeightRatio = 0.55;
   const rows = Math.max(1, Math.round((height / width) * columns * rowHeightRatio));
   const sampleCanvas = createCanvas(columns, rows);
   const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
@@ -177,6 +241,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   sampleContext.drawImage(sourceCanvas, 0, 0, columns, rows);
 
   const sampled = sampleContext.getImageData(0, 0, columns, rows).data;
+  const imagePalette = options.colorMode === "colour" ? getImagePalette(sampled, options.colorCount) : null;
   const lines: string[] = [];
   const colors: string[][] = [];
 
@@ -189,11 +254,12 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const red = sampled[index] ?? 0;
       const green = sampled[index + 1] ?? 0;
       const blue = sampled[index + 2] ?? 0;
+      const [displayRed, displayGreen, displayBlue] = getClosestPaletteColor(red, green, blue, imagePalette);
 
       const luminance = luminanceFromRgb(red, green, blue);
       const tone = options.invert ? luminance : 1 - luminance;
       line += getGlyphForTone(tone, characters, options.characterSet, column, row);
-      rowColors.push(options.colorMode === "colour" ? toReadableColor(red, green, blue, tone) : palette.foreground);
+      rowColors.push(options.colorMode === "colour" ? toReadableColor(displayRed, displayGreen, displayBlue, tone) : palette.foreground);
     }
 
     lines.push(line);

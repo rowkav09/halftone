@@ -112,7 +112,7 @@ const registerFonts = () => {
   fontsRegistered = true;
 };
 
-const formatLines = (lines: string[], format: TextOutputFormat["id"]) => {
+export const formatTextOutput = (lines: string[], format: TextOutputFormat["id"]) => {
   switch (format) {
     case "discord": return ["```", ...lines, "```"];
     case "slash": return lines.map((line) => `// ${line}`);
@@ -134,7 +134,7 @@ const formatLines = (lines: string[], format: TextOutputFormat["id"]) => {
 
 export const generateFigletArt = (text: string, font: string, format: TextOutputFormat["id"] = "ascii"): GeneratedArt => {
   registerFonts();
-  const lines = formatLines(figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n"), format);
+  const lines = formatTextOutput(figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n"), format);
   return {
     lines,
     colors: lines.map((line) => Array.from(line, () => "#c8ffbf")),

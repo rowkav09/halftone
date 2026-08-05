@@ -4,23 +4,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HalftoneLogo } from "@/components/HalftoneLogo";
 import {
   CHARACTER_SETS,
+  COLOR_COUNTS,
   PALETTES,
-  RESOLUTION_PRESETS,
   type ArtOptions,
   type CharacterSetId,
+  type ColorCount,
   type ColorMode,
   type PaletteId,
-  type ResolutionKey,
   generateArtFromImage,
   sanitizeCustomCharacters,
 } from "@/lib/art";
-import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, generateCustomTextArt } from "@/lib/customText";
+import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatTextOutput, generateCustomTextArt } from "@/lib/customText";
 
 const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: string }> = [
   { id: "ascii", label: "ASCII", sample: "@#%*+=-:." },
   { id: "braille", label: "Braille", sample: "⣿⣷⣶⣤⣄⣀" },
   { id: "blocks", label: "Blocks", sample: "█▓▒░" },
-  { id: "unicode", label: "Unicode Dense", sample: "▁▂▃▄▅▆▇█▓▒░" },
+  { id: "unicode", label: "Unicode Dense", sample: "▁▂▃▄▅▆▇█" },
   { id: "unicodeFine", label: "Unicode Fine", sample: "@#WMW$B8&" },
   { id: "binary", label: "Binary", sample: "01" },
   { id: "matrix", label: "Matrix", sample: "ｱｲｳｴｵ0123" },
@@ -28,7 +28,10 @@ const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: 
   { id: "custom", label: "Custom glyphs", sample: "ROWAN" },
 ];
 
-const RESOLUTION_OPTIONS: ResolutionKey[] = ["low", "medium", "high", "ultra", "packed"];
+const RESOLUTION_MIN = 48;
+const RESOLUTION_MAX = 240;
+const RESOLUTION_STEP = 4;
+const RESOLUTION_MARKS = [48, 80, 112, 144, 176, 208, 240] as const;
 const USAGE_ENDPOINT = "/api/uses";
 
 export default function Home() {
@@ -45,10 +48,11 @@ export default function Home() {
   const [textValue, setTextValue] = useState("HELLO");
   const [textStyleIndex, setTextStyleIndex] = useState(0);
   const [textOutputFormat, setTextOutputFormat] = useState<TextOutputFormat["id"]>("ascii");
-  const [resolutionIndex, setResolutionIndex] = useState(1);
+  const [resolutionColumns, setResolutionColumns] = useState(84);
   const [invert, setInvert] = useState(true);
   const [palette, setPalette] = useState<PaletteId>("bw");
   const [colorMode, setColorMode] = useState<ColorMode>("colour");
+  const [colorCount, setColorCount] = useState<ColorCount>(0);
   const [renderCount, setRenderCount] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [artLines, setArtLines] = useState<string[]>([]);
@@ -58,10 +62,12 @@ export default function Home() {
   const [isDragging, setIsDragging] = useState(false);
   const [imageReady, setImageReady] = useState(false);
 
-  const selectedResolution = RESOLUTION_OPTIONS[Math.min(4, Math.max(0, resolutionIndex))] ?? "medium";
   const activeTextStyle = CUSTOM_TEXT_STYLES[textStyleIndex] ?? CUSTOM_TEXT_STYLES[0];
   const activePalette = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
   const textTheme = colorMode === "colour" ? { foreground: "#e8edf2", background: "#000000" } : activePalette;
+  const formattedArtLines = useMemo(() => formatTextOutput(artLines, textOutputFormat), [artLines, textOutputFormat]);
+  const previewArtLines = mode === "text" ? formattedArtLines : artLines;
+  const previewColumns = Math.max(...previewArtLines.map((line) => line.length), 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,11 +97,11 @@ export default function Home() {
     const canvas = previewCanvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) throw new Error("Canvas 2D context is unavailable.");
-    const isPacked = selectedResolution === "packed";
-    const fontSize = isPacked ? 11 : 16;
-    const padding = isPacked ? 12 : 20;
-    const glyphAdvance = isPacked ? 7 : 12;
-    const lineHeight = isPacked ? 11 : 20;
+    const isDense = generated.columns >= 176;
+    const fontSize = isDense ? 11 : 16;
+    const padding = isDense ? 12 : 20;
+    const glyphAdvance = isDense ? 7 : 12;
+    const lineHeight = isDense ? 11 : 20;
     canvas.width = Math.max(1, generated.columns * glyphAdvance + padding * 2);
     canvas.height = Math.max(1, generated.rows * lineHeight + padding * 2);
     context.fillStyle = generated.background;
@@ -106,24 +112,24 @@ export default function Home() {
       context.fillStyle = generated.colors[row]?.[column] ?? generated.foreground;
       context.fillText(glyph, padding + column * glyphAdvance, padding + row * lineHeight);
     }));
-  }, [selectedResolution]);
+  }, []);
 
   const renderArt = useCallback(async () => {
     const options: ArtOptions = {
-      columns: RESOLUTION_PRESETS[selectedResolution].columns,
+      columns: resolutionColumns,
       characterSet,
       customText: customGlyphs,
       invert,
       palette,
       colorMode,
-      packed: selectedResolution === "packed",
+      colorCount,
     };
     if (mode === "image" && !imageRef.current) return;
     if (!activeTextStyle) return;
     setIsRendering(true);
     try {
       const generated = mode === "text"
-        ? generateCustomTextArt(textValue, activeTextStyle, textOutputFormat)
+        ? generateCustomTextArt(textValue, activeTextStyle)
         : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setArtLines(generated.lines);
       setColumns(generated.columns);
@@ -136,7 +142,7 @@ export default function Home() {
     } finally {
       setIsRendering(false);
     }
-  }, [activeTextStyle, characterSet, colorMode, customGlyphs, drawGeneratedArt, incrementUsage, invert, mode, palette, selectedResolution, textOutputFormat, textValue]);
+  }, [activeTextStyle, characterSet, colorCount, colorMode, customGlyphs, drawGeneratedArt, incrementUsage, invert, mode, palette, resolutionColumns, textValue]);
 
   useEffect(() => {
     if (mode !== "text" && !imageReady) return;
@@ -165,17 +171,17 @@ export default function Home() {
   const exportName = mode === "text" ? textValue.trim().toLowerCase().replace(/\s+/g, "-") || "text-art" : "halftone";
   const exportText = () => {
     const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([artLines.join("\n")], { type: "text/plain;charset=utf-8" }));
+    link.href = URL.createObjectURL(new Blob([formattedArtLines.join("\n")], { type: "text/plain;charset=utf-8" }));
     link.download = `${exportName}.txt`;
     link.click();
     URL.revokeObjectURL(link.href);
   };
 
   const copyText = useCallback(async () => {
-    if (!artLines.length) return;
+    if (!formattedArtLines.length) return;
 
     try {
-      await navigator.clipboard.writeText(artLines.join("\n"));
+      await navigator.clipboard.writeText(formattedArtLines.join("\n"));
       setCopyState("copied");
       setStatus("Copied ASCII text to clipboard.");
     } catch {
@@ -185,7 +191,7 @@ export default function Home() {
 
     if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
     copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
-  }, [artLines]);
+  }, [formattedArtLines]);
 
   return (
     <main className="min-h-screen bg-black text-slate-100">
@@ -205,13 +211,13 @@ export default function Home() {
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">
               <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Create from</h2>
               <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setMode("image")} className={`rounded-sm border px-3 py-2 text-sm ${mode === "image" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Image</button><button type="button" onClick={() => setMode("text")} className={`rounded-sm border px-3 py-2 text-sm ${mode === "text" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Text</button></div>
-              {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Output format<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><div className="grid grid-cols-2 gap-2">{CUSTOM_TEXT_STYLES.map((style, index) => <button key={style.id} type="button" onClick={() => setTextStyleIndex(index)} className={`rounded-sm border px-2 py-2 text-left text-xs ${textStyleIndex === index ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{style.name}</button>)}</div></> : null}
+              {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><div className="grid grid-cols-2 gap-2">{CUSTOM_TEXT_STYLES.map((style, index) => <button key={style.id} type="button" onClick={() => setTextStyleIndex(index)} className={`rounded-sm border px-2 py-2 text-left text-xs ${textStyleIndex === index ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{style.name}</button>)}</div></> : null}
             </div>
 
             {mode === "image" ? <>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Character set</h2><div className="grid gap-2">{CHARACTER_SET_OPTIONS.map((option) => <button key={option.id} type="button" onClick={() => setCharacterSet(option.id)} className={`rounded-sm border px-3 py-2 text-left ${characterSet === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10 bg-white/[0.03]"}`}><span className="text-sm text-white">{option.label}</span><span className="mt-1 block font-mono text-[10px] text-slate-500">{option.sample}</span></button>)}</div>{characterSet === "custom" ? <textarea value={customGlyphs} onChange={(event) => setCustomGlyphs(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="@#%" /> : null}</div>
 
-            <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex justify-between text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Resolution</span><span>{RESOLUTION_PRESETS[selectedResolution].label}</span></div><input type="range" min={0} max={4} value={resolutionIndex} onChange={(event) => setResolutionIndex(Number(event.target.value))} className="h-2 w-full accent-emerald-300" /><div className="flex justify-between text-[9px] uppercase text-slate-500">{RESOLUTION_OPTIONS.map((option) => <span key={option}>{RESOLUTION_PRESETS[option].label}</span>)}</div></div>
+            <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex justify-between text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Resolution</span><span>{resolutionColumns} columns</span></div><div className="relative"><input type="range" min={RESOLUTION_MIN} max={RESOLUTION_MAX} step={RESOLUTION_STEP} value={resolutionColumns} onChange={(event) => setResolutionColumns(Number(event.target.value))} className="h-2 w-full accent-emerald-300" /><div aria-hidden className="pointer-events-none absolute inset-x-1 top-1/2 flex -translate-y-1/2 justify-between">{RESOLUTION_MARKS.map((mark) => <span key={mark} className={`h-1.5 w-1.5 rounded-sm ${resolutionColumns >= mark ? "bg-emerald-200" : "bg-slate-600"}`} />)}</div></div><div className="flex justify-between text-[9px] uppercase text-slate-500">{RESOLUTION_MARKS.map((mark) => <span key={mark}>{mark}</span>)}</div><p className="text-xs text-slate-400">Fine detail to dense output, in even steps.</p></div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><div><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Invert</h2><p className="mt-1 text-xs text-slate-400">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-pressed={invert} /></div></div>
             </> : null}
           </section>
@@ -219,10 +225,10 @@ export default function Home() {
           <section className="flex min-h-[72vh] flex-col rounded-md border border-white/10 bg-black/60 p-3">
             <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
               <span>{mode === "text" ? "ASCII output" : "Preview"}</span>
-              <span>{artLines.length ? `${columns} x ${rows}` : "waiting"}</span>
+              <span>{previewArtLines.length ? `${previewColumns} x ${previewArtLines.length}` : "waiting"}</span>
             </div>
             {mode === "text" ? (
-              <pre style={{ color: textTheme.foreground, backgroundColor: textTheme.background }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px] leading-[0.9rem]">{artLines.length ? artLines.join("\n") : "Type text to generate an ASCII banner."}</pre>
+              <pre style={{ color: textTheme.foreground, backgroundColor: textTheme.background }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px] leading-[0.9rem]">{previewArtLines.length ? previewArtLines.join("\n") : "Type text to generate an ASCII banner."}</pre>
             ) : (
               <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black">
                 <canvas ref={previewCanvasRef} className={artLines.length ? "h-auto w-full max-w-full" : "hidden"} />
@@ -236,6 +242,8 @@ export default function Home() {
           <aside className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
             <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3">
               <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2>
+              <label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text output format<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label>
+              <p className="text-xs text-slate-400">Applies to copied and TXT output; text mode previews it too.</p>
               {mode === "image" ? <button type="button" disabled={!artLines.length} onClick={() => { const canvas = previewCanvasRef.current; if (!canvas) return; const link = document.createElement("a"); link.href = canvas.toDataURL("image/png"); link.download = `${exportName}.png`; link.click(); }} className="w-full rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">Export PNG</button> : null}
               <button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button>
               <button type="button" disabled={!artLines.length} onClick={exportText} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">Export TXT</button>
@@ -244,8 +252,9 @@ export default function Home() {
               <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2>
               <button type="button" onClick={() => setColorMode("colour")} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">Colour</span><span className="h-3 w-3 rounded-sm bg-gradient-to-br from-rose-400 via-amber-300 to-sky-400" /></button>
               {PALETTES.map((option) => <button key={option.id} type="button" onClick={() => { setPalette(option.id); setColorMode("monochrome"); }} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left ${colorMode === "monochrome" && palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: option.foreground }} /></button>)}
+              {mode === "image" && colorMode === "colour" ? <div className="border-t border-white/10 pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>Image colours</span><span>{colorCount === 0 ? "Full" : colorCount}</span></div><div className="grid grid-cols-5 gap-1">{COLOR_COUNTS.map((count) => <button key={count} type="button" onClick={() => setColorCount(count)} className={`rounded-sm border px-1 py-2 text-xs ${colorCount === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count === 0 ? "Full" : count}</button>)}</div></div> : null}
             </div>
-            <div className="rounded-md border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{columns || RESOLUTION_PRESETS[selectedResolution].columns}</span></div></div>
+            <div className="rounded-md border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{columns || resolutionColumns}</span></div></div>
           </aside>
         </div>
       </div>
