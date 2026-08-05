@@ -41,7 +41,7 @@ import Standard from "figlet/fonts/Standard";
 
 export type CustomTextStyle = { id: string; name: string; font: string };
 export type TextOutputFormat = {
-  id: "ascii" | "slash" | "tripleSlash" | "slashStar" | "sql" | "javaDoc" | "bash" | "bashMultiline" | "sgml" | "echo" | "python" | "batch" | "singleQuote" | "matlab";
+  id: "ascii" | "discord" | "slash" | "tripleSlash" | "slashStar" | "sql" | "javaDoc" | "bash" | "bashMultiline" | "sgml" | "echo" | "python" | "batch" | "singleQuote" | "matlab";
   name: string;
 };
 
@@ -88,6 +88,7 @@ export const CUSTOM_TEXT_STYLES: readonly CustomTextStyle[] = [
 
 export const TEXT_OUTPUT_FORMATS: readonly TextOutputFormat[] = [
   { id: "ascii", name: "None" },
+  { id: "discord", name: "Discord code block · ```" },
   { id: "slash", name: "Single Line Double Slash · //" },
   { id: "tripleSlash", name: "Single Line Triple Slash · ///" },
   { id: "slashStar", name: "Slash Star · /* */" },
@@ -113,6 +114,7 @@ const registerFonts = () => {
 
 const formatLines = (lines: string[], format: TextOutputFormat["id"]) => {
   switch (format) {
+    case "discord": return ["```", ...lines, "```"];
     case "slash": return lines.map((line) => `// ${line}`);
     case "tripleSlash": return lines.map((line) => `/// ${line}`);
     case "slashStar": return lines.map((line) => `/* ${line} */`);

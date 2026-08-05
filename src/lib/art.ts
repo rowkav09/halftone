@@ -5,7 +5,7 @@ export const CHARACTER_SETS = {
   binary: "01",
   matrix: " ｱｲｳｴｵ0123",
   symbols: " .`'-,^:;!<>/\\|[]{}()",
-  unicode: " ▁▂▃▄▅▆▇█▓▒░⢀⢂⢄⢅⢆⢇⢸⣀⣄⣆⣇⣈⣊⣌⣎⣐⣒⣔⣖⣘⣚⣜⣞⣠⣤⣦⣧⣨⣪⣬⣮⣰⣲⣴⣶⣸⣺⣼⣿",
+  unicode: " ▁▂▃▄▅▆▇█",
   unicodeFine: " .`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
 } as const;
 
@@ -77,16 +77,23 @@ const toHexColor = (red: number, green: number, blue: number) => {
 
 const luminanceFromRgb = (red: number, green: number, blue: number) => (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
 
+const toReadableColor = (red: number, green: number, blue: number, tone: number) => {
+  const lift = 0.22 + 0.58 * clamp(tone, 0, 1);
+  return toHexColor(
+    red + (235 - red) * lift,
+    green + (242 - green) * lift,
+    blue + (255 - blue) * lift,
+  );
+};
+
 const getOrderedCharacters = (characters: string) => {
   const sequence = Array.from(characters);
 
   return sequence.length > 0 ? sequence : Array.from(CHARACTER_SETS.ascii);
 };
 
-const remapTone = (tone: number) => {
-  const lifted = Math.pow(clamp(tone, 0, 1), 0.85);
-  return clamp(0.5 + (lifted - 0.5) * 1.15, 0, 1);
-};
+// Preserve shaded detail without filling a truly black background with noise.
+const remapTone = (tone: number) => Math.pow(clamp(tone, 0, 1), 0.68);
 
 const bayer4 = [
   [0, 8, 2, 10],
@@ -94,6 +101,10 @@ const bayer4 = [
   [3, 11, 1, 9],
   [15, 7, 13, 5],
 ];
+
+const getDitherThreshold = (column: number, row: number) => ((bayer4[row % 4]?.[column % 4] ?? 8) + 0.5) / 16;
+
+const getGlyphHash = (column: number, row: number) => Math.abs((column * 17 + row * 31 + column * row * 7) % 997);
 
 const getGlyphForTone = (
   tone: number,
@@ -112,28 +123,27 @@ const getGlyphForTone = (
     return tone > threshold ? "1" : "0";
   }
 
-  if (characterSet === "matrix") {
-    // Keep highlights open, then vary the kana/digit glyphs without losing tonal shape.
-    const adjustedTone = Math.pow(clamp(tone, 0, 1), 1.35);
-    if (adjustedTone < 0.16) {
-      return " ";
-    }
+  if (characterSet === "unicode") {
+    // Horizontal blocks have a consistent visual-density ramp; mixing unrelated Braille cells made edges noisy.
+    const index = Math.round(remapTone(tone) * (characters.length - 1));
+    return characters[index] ?? characters[characters.length - 1] ?? " ";
+  }
 
+  if (characterSet === "matrix") {
+    // Dithered coverage preserves the image; kana/digit selection only adds the Matrix texture.
+    if (remapTone(tone) < getDitherThreshold(column, row)) return " ";
     const glyphs = characters.slice(1);
-    const baseIndex = Math.floor(adjustedTone * (glyphs.length - 1));
-    const variation = (column * 17 + row * 31 + Math.round(tone * 97)) % glyphs.length;
-    const index = adjustedTone > 0.72 ? Math.max(baseIndex, variation) : baseIndex;
-    return glyphs[index] ?? glyphs[glyphs.length - 1] ?? " ";
+    return glyphs[getGlyphHash(column, row) % glyphs.length] ?? " ";
   }
 
   if (characterSet === "symbols") {
-    // Punctuation has irregular visual density, so bias toward a sparse, high-contrast ramp.
-    const adjustedTone = Math.pow(clamp(tone, 0, 1), 1.2);
-    if (adjustedTone < 0.08) {
-      return " ";
-    }
-    const index = Math.round(adjustedTone * (characters.length - 1));
-    return characters[index] ?? characters[characters.length - 1] ?? " ";
+    // Punctuation has no natural density order, so coverage and glyph choice are handled separately.
+    if (remapTone(tone) < getDitherThreshold(column, row)) return " ";
+    const light = [".", "`", "'", ",", "-"];
+    const middle = [":", ";", "!", "<", ">", "/", "\\", "|"];
+    const heavy = ["[", "]", "{", "}", "(", ")"];
+    const tier = tone < 0.38 ? light : tone < 0.72 ? middle : heavy;
+    return tier[getGlyphHash(column, row) % tier.length] ?? " ";
   }
 
   const adjustedTone = remapTone(tone);
@@ -180,9 +190,10 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const green = sampled[index + 1] ?? 0;
       const blue = sampled[index + 2] ?? 0;
 
-      const tone = options.invert ? luminanceFromRgb(red, green, blue) : 1 - luminanceFromRgb(red, green, blue);
+      const luminance = luminanceFromRgb(red, green, blue);
+      const tone = options.invert ? luminance : 1 - luminance;
       line += getGlyphForTone(tone, characters, options.characterSet, column, row);
-      rowColors.push(options.colorMode === "colour" ? toHexColor(red, green, blue) : palette.foreground);
+      rowColors.push(options.colorMode === "colour" ? toReadableColor(red, green, blue, tone) : palette.foreground);
     }
 
     lines.push(line);
