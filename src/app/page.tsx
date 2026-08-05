@@ -55,6 +55,7 @@ export default function Home() {
 
   const selectedResolution = RESOLUTION_OPTIONS[Math.min(4, Math.max(0, resolutionIndex))] ?? "medium";
   const activeTextStyle = CUSTOM_TEXT_STYLES[textStyleIndex] ?? CUSTOM_TEXT_STYLES[0];
+  const activePalette = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,12 +114,12 @@ export default function Home() {
     setIsRendering(true);
     try {
       const generated = mode === "text"
-        ? generateCustomTextArt(textValue, activeTextStyle, options)
+        ? generateCustomTextArt(textValue, activeTextStyle)
         : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setArtLines(generated.lines);
       setColumns(generated.columns);
       setRows(generated.rows);
-      drawGeneratedArt(generated);
+      if (mode === "image") drawGeneratedArt(generated);
       setStatus(`Rendered ${generated.columns} x ${generated.rows} characters.`);
       void incrementUsage();
     } catch (error) {
@@ -183,16 +184,33 @@ export default function Home() {
               {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-xl border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><div className="grid grid-cols-2 gap-2">{CUSTOM_TEXT_STYLES.map((style, index) => <button key={style.id} type="button" onClick={() => setTextStyleIndex(index)} className={`rounded-lg border px-2 py-2 text-left text-xs ${textStyleIndex === index ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{style.name}</button>)}</div></> : null}
             </div>
 
+            {mode === "image" ? <>
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Character set</h2><div className="grid gap-2">{CHARACTER_SET_OPTIONS.map((option) => <button key={option.id} type="button" onClick={() => setCharacterSet(option.id)} className={`rounded-xl border px-3 py-2 text-left ${characterSet === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10 bg-white/[0.03]"}`}><span className="text-sm text-white">{option.label}</span><span className="mt-1 block font-mono text-[10px] text-slate-500">{option.sample}</span></button>)}</div>{characterSet === "custom" ? <textarea value={customGlyphs} onChange={(event) => setCustomGlyphs(event.target.value)} rows={2} className="w-full rounded-xl border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="@#%" /> : null}</div>
 
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><div className="flex justify-between text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Resolution</span><span>{RESOLUTION_PRESETS[selectedResolution].label}</span></div><input type="range" min={0} max={4} value={resolutionIndex} onChange={(event) => setResolutionIndex(Number(event.target.value))} className="h-2 w-full accent-emerald-300" /><div className="flex justify-between text-[9px] uppercase text-slate-500">{RESOLUTION_OPTIONS.map((option) => <span key={option}>{RESOLUTION_PRESETS[option].label}</span>)}</div></div>
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><div><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Invert</h2><p className="mt-1 text-xs text-slate-400">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-full border ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-pressed={invert} /></div></div>
             <div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour mode</h2><div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setColorMode("colour")} className={`rounded-xl border px-3 py-2 text-sm ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10 text-slate-300"}`}>Colour</button><button type="button" onClick={() => setColorMode("monochrome")} className={`rounded-xl border px-3 py-2 text-sm ${colorMode === "monochrome" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10 text-slate-300"}`}>Monochrome</button></div></div>
+            </> : null}
           </section>
 
-          <section className="flex min-h-[72vh] flex-col rounded-[1rem] border border-white/10 bg-black/60 p-3"><div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Preview</span><span>{artLines.length ? `${columns} x ${rows}` : "waiting"}</span></div><div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-[0.9rem] border border-white/10 bg-black"><canvas ref={previewCanvasRef} className={artLines.length ? "h-auto w-full max-w-full" : "hidden"} />{!artLines.length ? <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">{mode === "text" ? "type your text" : "drop image"}</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div><pre className="mt-3 max-h-40 overflow-auto rounded-[0.9rem] border border-white/10 bg-black px-3 py-2 font-mono text-[10px] leading-[0.9rem] text-emerald-100/90">{artLines.join("\n")}</pre><p className="mt-2 text-xs text-slate-500">{status}</p></section>
+          <section className="flex min-h-[72vh] flex-col rounded-[1rem] border border-white/10 bg-black/60 p-3">
+            <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+              <span>{mode === "text" ? "ASCII output" : "Preview"}</span>
+              <span>{artLines.length ? `${columns} x ${rows}` : "waiting"}</span>
+            </div>
+            {mode === "text" ? (
+              <pre style={{ color: activePalette.foreground, backgroundColor: activePalette.background }} className="min-h-0 flex-1 overflow-auto rounded-[0.9rem] border border-white/10 p-5 font-mono text-[10px] leading-[0.9rem]">{artLines.length ? artLines.join("\n") : "Type text to generate an ASCII banner."}</pre>
+            ) : (
+              <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-[0.9rem] border border-white/10 bg-black">
+                <canvas ref={previewCanvasRef} className={artLines.length ? "h-auto w-full max-w-full" : "hidden"} />
+                {!artLines.length ? <p className="font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}
+                {isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}
+              </div>
+            )}
+            <p className="mt-2 text-xs text-slate-500">{status}</p>
+          </section>
 
-          <aside className="space-y-3 rounded-[1rem] border border-white/10 bg-white/[0.03] p-3 backdrop-blur-sm"><div className="space-y-3 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2><button type="button" disabled={!artLines.length} onClick={() => { const canvas = previewCanvasRef.current; if (!canvas) return; const link = document.createElement("a"); link.href = canvas.toDataURL("image/png"); link.download = `${exportName}.png`; link.click(); }} className="w-full rounded-full bg-emerald-300 px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">Export PNG</button><button type="button" disabled={!artLines.length} onClick={exportText} className="w-full rounded-full border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">Export TXT</button></div><div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Ink theme</h2>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => setPalette(option.id)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left ${palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-full" style={{ backgroundColor: option.foreground }} /></button>)}</div><div className="rounded-[0.9rem] border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{columns || RESOLUTION_PRESETS[selectedResolution].columns}</span></div></div></aside>
+          <aside className="space-y-3 rounded-[1rem] border border-white/10 bg-white/[0.03] p-3 backdrop-blur-sm"><div className="space-y-3 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2>{mode === "image" ? <button type="button" disabled={!artLines.length} onClick={() => { const canvas = previewCanvasRef.current; if (!canvas) return; const link = document.createElement("a"); link.href = canvas.toDataURL("image/png"); link.download = `${exportName}.png`; link.click(); }} className="w-full rounded-full bg-emerald-300 px-3 py-2 text-sm font-semibold text-black disabled:opacity-40">Export PNG</button> : null}<button type="button" disabled={!artLines.length} onClick={exportText} className="w-full rounded-full border border-white/10 px-3 py-2 text-sm text-white disabled:opacity-40">Export TXT</button></div><div className="space-y-2 rounded-[0.9rem] border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Ink theme</h2>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => setPalette(option.id)} className={`flex w-full items-center justify-between rounded-xl border px-3 py-2 text-left ${palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-full" style={{ backgroundColor: option.foreground }} /></button>)}</div><div className="rounded-[0.9rem] border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{columns || RESOLUTION_PRESETS[selectedResolution].columns}</span></div></div></aside>
         </div>
       </div>
     </main>
