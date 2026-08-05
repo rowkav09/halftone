@@ -1,6 +1,8 @@
 import type { GeneratedArt } from "@/lib/art";
 
 const escapeMarkup = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const isHexColour = (value: string | undefined) => Boolean(value && /^#[\da-f]{6}$/i.test(value));
+const safeColour = (value: string | undefined, fallback: string) => isHexColour(value) ? value as string : fallback;
 
 const hexToRgb = (value: string) => {
   const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(value);
@@ -19,14 +21,45 @@ const colouredRuns = (line: string, colors: string[], fallback: string) => {
   return runs;
 };
 
-/** An HTML fragment that retains the per-character colour of an image render. */
-export const generateHtmlExport = (art: GeneratedArt) => {
-  const rows = art.lines.map((line, row) => colouredRuns(line, art.colors[row] ?? [], art.foreground)
-    .map((run) => `<span style="color:${run.color}">${escapeMarkup(run.text)}</span>`).join("")).join("\n");
-  return `<!doctype html>
-<meta charset="utf-8">
-<title>Halftone ASCII art</title>
-<pre style="margin:0;padding:24px;background:${art.background};color:${art.foreground};font:16px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre">${rows}</pre>`;
+const colouredHtmlLine = (line: string, colors: string[], fallback: string) => {
+  let output = "";
+  let run = "";
+  let activeColour = "";
+  const flush = () => {
+    if (!run) return;
+    output += `<span style="color:${safeColour(activeColour, fallback)}">${escapeMarkup(run)}</span>`;
+    run = "";
+  };
+  Array.from(line).forEach((glyph, index) => {
+    if (/\s/u.test(glyph)) {
+      flush();
+      // white-space:pre keeps literal spaces and tabs exact without extra spans.
+      output += escapeMarkup(glyph);
+      return;
+    }
+    const colour = colors[index] ?? fallback;
+    if (run && colour !== activeColour) flush();
+    activeColour = colour;
+    run += glyph;
+  });
+  flush();
+  return output;
+};
+
+export type HtmlExportOptions = {
+  background?: string | null;
+  lineHeight?: number;
+  padding?: number;
+};
+
+/** A self-contained preformatted snippet with grouped inline colours. */
+export const generateHtmlExport = (art: GeneratedArt, options: HtmlExportOptions = {}) => {
+  const fallback = safeColour(art.foreground, "#e8edf2");
+  const rows = art.lines.map((line, row) => colouredHtmlLine(line, art.colors[row] ?? [], fallback)).join("\n");
+  const background = options.background === null ? "" : `background:${safeColour(options.background ?? art.background, "#000000")};`;
+  const lineHeight = Math.min(3, Math.max(0.5, options.lineHeight ?? 1.25));
+  const padding = Math.max(0, options.padding ?? 24);
+  return `<pre style="margin:0;${background}color:${fallback};padding:${padding}px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;line-height:${lineHeight};white-space:pre;">${rows}</pre>`;
 };
 
 /** A standalone SVG made from text nodes, suitable for browser and design-tool import. */

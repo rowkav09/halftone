@@ -132,10 +132,56 @@ export const formatTextOutput = (lines: string[], format: TextOutputFormat["id"]
   }
 };
 
+const singleColour = (line: string, foreground: string) => Array.from(line, () => foreground);
+const joinedColours = (prefix: string, colors: string[], suffix: string, foreground: string) => [
+  ...singleColour(prefix, foreground),
+  ...colors,
+  ...singleColour(suffix, foreground),
+];
+
+/** Adds optional code/comment wrappers without losing the colour map of the FIGlet rows. */
+export const formatGeneratedTextOutput = (art: GeneratedArt, format: TextOutputFormat["id"]): GeneratedArt => {
+  if (format === "ascii") return art;
+  const decoratedRows = (prefix: string, suffix = "") => art.lines.map((line, row) => ({
+    line: `${prefix}${line}${suffix}`,
+    colors: joinedColours(prefix, art.colors[row] ?? singleColour(line, art.foreground), suffix, art.foreground),
+  }));
+  const wrappers = (start: string, end: string, rows = art.lines.map((line, row) => ({ line, colors: art.colors[row] ?? singleColour(line, art.foreground) }))) => [
+    { line: start, colors: singleColour(start, art.foreground) },
+    ...rows,
+    { line: end, colors: singleColour(end, art.foreground) },
+  ];
+  let rows: Array<{ line: string; colors: string[] }>;
+  switch (format) {
+    case "discord": rows = wrappers("```", "```"); break;
+    case "slash": rows = decoratedRows("// "); break;
+    case "tripleSlash": rows = decoratedRows("/// "); break;
+    case "slashStar": rows = decoratedRows("/* ", " */"); break;
+    case "sql": rows = decoratedRows("-- "); break;
+    case "javaDoc": rows = wrappers("/**", " */", decoratedRows(" * ")); break;
+    case "bash": rows = decoratedRows("# "); break;
+    case "bashMultiline": rows = wrappers(": '", "'"); break;
+    case "sgml": rows = wrappers("<!--", "-->"); break;
+    case "batch": rows = decoratedRows("REM "); break;
+    case "singleQuote": rows = decoratedRows("' "); break;
+    case "matlab": rows = decoratedRows("% "); break;
+    case "echo": rows = formatTextOutput(art.lines, format).map((line) => ({ line, colors: singleColour(line, art.foreground) })); break;
+    case "python": rows = wrappers("\"\"\"", "\"\"\""); break;
+    default: rows = art.lines.map((line) => ({ line, colors: singleColour(line, art.foreground) }));
+  }
+  return {
+    ...art,
+    lines: rows.map((row) => row.line),
+    colors: rows.map((row) => row.colors),
+    columns: Math.max(...rows.map((row) => Array.from(row.line).length), 0),
+    rows: rows.length,
+  };
+};
+
 export const generateFigletArt = (text: string, font: string, format: TextOutputFormat["id"] = "ascii"): GeneratedArt => {
   registerFonts();
-  const lines = formatTextOutput(figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n"), format);
-  return {
+  const lines = figlet.textSync(text.trim() || "TEXT", { font }).replace(/\s+$/u, "").split("\n");
+  const art: GeneratedArt = {
     lines,
     colors: lines.map((line) => Array.from(line, () => "#c8ffbf")),
     columns: Math.max(...lines.map((line) => line.length), 0),
@@ -143,6 +189,7 @@ export const generateFigletArt = (text: string, font: string, format: TextOutput
     foreground: "#c8ffbf",
     background: "#000000",
   };
+  return formatGeneratedTextOutput(art, format);
 };
 
 export const generateCustomTextArt = (text: string, style: CustomTextStyle, format: TextOutputFormat["id"] = "ascii") => generateFigletArt(text, style.font, format);

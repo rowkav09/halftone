@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { HalftoneLogo } from "@/components/HalftoneLogo";
 import {
   CHARACTER_SETS,
@@ -22,7 +22,8 @@ import {
   sanitizeCustomCharacters,
 } from "@/lib/art";
 import { generateAnsiExport, generateHtmlExport, generateSvgExport } from "@/lib/artExport";
-import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatTextOutput, generateCustomTextArt } from "@/lib/customText";
+import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatGeneratedTextOutput, generateCustomTextArt } from "@/lib/customText";
+import { DEFAULT_FIGLET_COLOUR_SETTINGS, FIGLET_COLOUR_STYLES, applyFigletColours, getFigletBackground, type FigletColourSettings } from "@/lib/textColour";
 
 const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: string }> = [
   { id: "ascii", label: "ASCII", sample: "@#%*+=-:." },
@@ -81,6 +82,30 @@ function RangeControl({ label, value, min, max, step, suffix = "", onChange, for
   return <label className="block border-b border-white/[0.07] pb-2 last:border-0 last:pb-0"><span className="mb-1 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>{label}</span><span className="text-slate-300">{format ? format(value) : `${value}${suffix}`}</span></span><input aria-label={label} type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} className="h-1.5 w-full accent-emerald-300" /></label>;
 }
 
+function ColouredFigletLine({ line, colors, fallback, row }: { line: string; colors: string[]; fallback: string; row: number }) {
+  const nodes: ReactNode[] = [];
+  let run = "";
+  let activeColour = "";
+  const flush = (key: number) => {
+    if (!run) return;
+    nodes.push(<span key={`${row}-${key}`} style={{ color: activeColour || fallback }}>{run}</span>);
+    run = "";
+  };
+  Array.from(line).forEach((glyph, column) => {
+    if (/\s/u.test(glyph)) {
+      flush(column);
+      nodes.push(glyph);
+      return;
+    }
+    const colour = colors[column] ?? fallback;
+    if (run && colour !== activeColour) flush(column);
+    activeColour = colour;
+    run += glyph;
+  });
+  flush(line.length);
+  return <>{nodes}</>;
+}
+
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileUrlRef = useRef<string | null>(null);
@@ -96,6 +121,7 @@ export default function Home() {
   const [textValue, setTextValue] = useState("HELLO");
   const [textStyleIndex, setTextStyleIndex] = useState(0);
   const [textOutputFormat, setTextOutputFormat] = useState<TextOutputFormat["id"]>("ascii");
+  const [figletColourSettings, setFigletColourSettings] = useState<FigletColourSettings>(DEFAULT_FIGLET_COLOUR_SETTINGS);
   const [resolutionColumns, setResolutionColumns] = useState(84);
   const [invert, setInvert] = useState(true);
   const [palette, setPalette] = useState<PaletteId>("bw");
@@ -106,6 +132,7 @@ export default function Home() {
   const [adjustments, setAdjustments] = useState<ImageAdjustments>(DEFAULT_IMAGE_ADJUSTMENTS);
   const [renderCount, setRenderCount] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [htmlCopyState, setHtmlCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [generatedArt, setGeneratedArt] = useState<GeneratedArt | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -116,10 +143,11 @@ export default function Home() {
 
   const activeTextStyle = CUSTOM_TEXT_STYLES[textStyleIndex] ?? CUSTOM_TEXT_STYLES[0];
   const activePalette = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
-  const artLines = useMemo(() => generatedArt?.lines ?? [], [generatedArt]);
-  const formattedArtLines = useMemo(() => mode === "text" ? formatTextOutput(artLines, textOutputFormat) : artLines, [artLines, mode, textOutputFormat]);
-  const previewColumns = Math.max(...formattedArtLines.map((line) => line.length), 0);
-  const textTheme = colorMode === "colour" ? { foreground: "#e8edf2", background: "#000000" } : activePalette;
+  const colouredTextArt = useMemo(() => mode === "text" && generatedArt ? applyFigletColours(generatedArt, figletColourSettings) : null, [figletColourSettings, generatedArt, mode]);
+  const displayArt = useMemo(() => mode === "text" && colouredTextArt ? formatGeneratedTextOutput(colouredTextArt, textOutputFormat) : generatedArt, [colouredTextArt, generatedArt, mode, textOutputFormat]);
+  const artLines = useMemo(() => displayArt?.lines ?? [], [displayArt]);
+  const previewColumns = Math.max(...artLines.map((line) => line.length), 0);
+  const textBackground = useMemo(() => getFigletBackground(figletColourSettings), [figletColourSettings]);
   const exportName = mode === "text" ? textValue.trim().toLowerCase().replace(/\s+/g, "-") || "text-art" : "halftone";
   const previewAspect = useMemo(() => generatedArt ? canvasMetrics(generatedArt).width / canvasMetrics(generatedArt).height : 1.5, [generatedArt]);
 
@@ -194,15 +222,33 @@ export default function Home() {
   }, []);
 
   const copyText = useCallback(async () => {
-    if (!formattedArtLines.length) return;
+    if (!artLines.length) return;
     try {
-      await navigator.clipboard.writeText(formattedArtLines.join("\n"));
+      await navigator.clipboard.writeText(artLines.join("\n"));
       setCopyState("copied");
       setStatus("Copied ASCII text to clipboard.");
     } catch { setCopyState("failed"); setStatus("Could not copy automatically. Use Export TXT instead."); }
     if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
     copyTimerRef.current = window.setTimeout(() => setCopyState("idle"), 1800);
-  }, [formattedArtLines]);
+  }, [artLines]);
+
+  const updateFigletColour = useCallback(<Key extends keyof FigletColourSettings>(key: Key, value: FigletColourSettings[Key]) => {
+    setFigletColourSettings((current) => ({ ...current, [key]: value }));
+  }, []);
+
+  const textHtmlOptions = useMemo(() => ({ background: textBackground ?? null, lineHeight: figletColourSettings.lineHeight, padding: 0 }), [figletColourSettings.lineHeight, textBackground]);
+  const copyHtml = useCallback(async () => {
+    if (!displayArt || mode !== "text") return;
+    try {
+      await navigator.clipboard.writeText(generateHtmlExport(displayArt, textHtmlOptions));
+      setHtmlCopyState("copied");
+      setStatus("Copied colour-preserving HTML.");
+    } catch {
+      setHtmlCopyState("failed");
+      setStatus("Could not copy HTML automatically. Use Export HTML instead.");
+    }
+    window.setTimeout(() => setHtmlCopyState("idle"), 1800);
+  }, [displayArt, mode, textHtmlOptions]);
 
   useEffect(() => {
     let cancelled = false;
@@ -319,7 +365,7 @@ export default function Home() {
     setStatus(`${preset.name} preset applied.`);
   };
 
-  const exportText = () => download(`${exportName}.txt`, formattedArtLines.join("\n"), "text/plain;charset=utf-8");
+  const exportText = () => download(`${exportName}.txt`, artLines.join("\n"), "text/plain;charset=utf-8");
   const exportPng = () => {
     const canvas = previewCanvasRef.current;
     if (!canvas) return;
@@ -343,7 +389,7 @@ export default function Home() {
           <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">
             <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Create from</h2>
             <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setMode("image")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "image" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Image</button><button type="button" onClick={() => setMode("text")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "text" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Text</button></div>
-            {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text style<select value={textStyleIndex} onChange={(event) => setTextStyleIndex(Number(event.target.value))} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{CUSTOM_TEXT_STYLES.map((style, index) => <option key={style.id} value={index}>{style.name}</option>)}</select></label></> : null}
+            {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text style<select value={textStyleIndex} onChange={(event) => setTextStyleIndex(Number(event.target.value))} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{CUSTOM_TEXT_STYLES.map((style, index) => <option key={style.id} value={index}>{style.name}</option>)}</select></label><div className="space-y-3 border-t border-white/10 pt-3"><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Colour treatment<select value={figletColourSettings.style} onChange={(event) => updateFigletColour("style", event.target.value as FigletColourSettings["style"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{FIGLET_COLOUR_STYLES.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>{figletColourSettings.style === "solid" ? <label className="flex items-center justify-between text-xs text-slate-300"><span>Solid colour</span><input aria-label="Solid text colour" type="color" value={figletColourSettings.solid} onChange={(event) => updateFigletColour("solid", event.target.value)} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label> : null}{figletColourSettings.style === "horizontal" || figletColourSettings.style === "vertical" ? <div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">Start<input aria-label="Gradient start colour" type="color" value={figletColourSettings.gradientStart} onChange={(event) => updateFigletColour("gradientStart", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">End<input aria-label="Gradient end colour" type="color" value={figletColourSettings.gradientEnd} onChange={(event) => updateFigletColour("gradientEnd", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div> : null}{figletColourSettings.style === "custom" ? <div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">First colour<input aria-label="Custom gradient first colour" type="color" value={figletColourSettings.customStart} onChange={(event) => updateFigletColour("customStart", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">Second colour<input aria-label="Custom gradient second colour" type="color" value={figletColourSettings.customEnd} onChange={(event) => updateFigletColour("customEnd", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div> : null}<label className="flex items-center justify-between text-xs text-slate-300"><span>Include background</span><input aria-label="Include background colour" type="checkbox" checked={figletColourSettings.includeBackground} onChange={(event) => updateFigletColour("includeBackground", event.target.checked)} className="h-4 w-4 accent-emerald-300" /></label>{figletColourSettings.includeBackground && figletColourSettings.style !== "terminal" && figletColourSettings.style !== "amber" ? <label className="flex items-center justify-between text-xs text-slate-300"><span>Background colour</span><input aria-label="Text background colour" type="color" value={figletColourSettings.background} onChange={(event) => updateFigletColour("background", event.target.value)} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label> : null}<RangeControl label="Line height" value={figletColourSettings.lineHeight} min={0.75} max={1.6} step={0.05} onChange={(value) => updateFigletColour("lineHeight", value)} format={(value) => value.toFixed(2)} /></div></> : null}
           </div>
 
           {mode === "image" ? <>
@@ -355,14 +401,14 @@ export default function Home() {
         </section>
 
         <section className="flex min-h-[72vh] flex-col rounded-md border border-white/10 bg-black/60 p-3">
-          <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>{mode === "text" ? "ASCII output" : "Preview"}</span><span>{formattedArtLines.length ? `${previewColumns} × ${formattedArtLines.length}` : "waiting"}</span></div>
-          {mode === "text" ? <pre style={{ color: textTheme.foreground, backgroundColor: textTheme.background }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px] leading-[0.9rem]">{formattedArtLines.length ? formattedArtLines.join("\n") : "Type text to generate an ASCII banner."}</pre> : <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black p-2"><div className="relative w-full" style={{ aspectRatio: previewAspect }}><canvas ref={previewCanvasRef} className={artLines.length ? "absolute inset-0 h-full w-full" : "hidden"} />{showComparison && imageUrl && artLines.length ? <div className="absolute inset-y-0 left-0 overflow-hidden border-r border-emerald-200/70" style={{ width: `${comparisonPosition}%` }}>{/* Blob URLs are local, user-supplied images and intentionally bypass Next image optimisation. */}<img src={imageUrl} alt="Original image comparison" className="h-full w-full object-fill" /></div> : null}{!artLines.length ? <p className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div></div>}
+          <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>{mode === "text" ? "ASCII output" : "Preview"}</span><span>{artLines.length ? `${previewColumns} × ${artLines.length}` : "waiting"}</span></div>
+          {mode === "text" ? <pre style={{ backgroundColor: textBackground ?? "transparent", lineHeight: figletColourSettings.lineHeight }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px]">{displayArt ? displayArt.lines.map((line, row) => <Fragment key={`${row}-${line}`}><ColouredFigletLine line={line} colors={displayArt.colors[row] ?? []} fallback={displayArt.foreground} row={row} />{row < displayArt.lines.length - 1 ? "\n" : null}</Fragment>) : "Type text to generate an ASCII banner."}</pre> : <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black p-2"><div className="relative w-full" style={{ aspectRatio: previewAspect }}><canvas ref={previewCanvasRef} className={artLines.length ? "absolute inset-0 h-full w-full" : "hidden"} />{showComparison && imageUrl && artLines.length ? <div className="absolute inset-y-0 left-0 overflow-hidden border-r border-emerald-200/70" style={{ width: `${comparisonPosition}%` }}>{/* Blob URLs are local, user-supplied images and intentionally bypass Next image optimisation. */}<img src={imageUrl} alt="Original image comparison" className="h-full w-full object-fill" /></div> : null}{!artLines.length ? <p className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div></div>}
           {mode === "image" && artLines.length ? <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3"><button type="button" onClick={() => setShowComparison((current) => !current)} className={`rounded-sm border px-3 py-1.5 text-xs transition hover:bg-white/10 ${showComparison ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>{showComparison ? "Hide before" : "Compare before"}</button>{showComparison ? <label className="flex flex-1 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500"><span>Before</span><input aria-label="Before and after comparison position" type="range" min="0" max="100" value={comparisonPosition} onChange={(event) => setComparisonPosition(Number(event.target.value))} className="h-1.5 flex-1 accent-emerald-300" /><span>After</span></label> : null}</div> : null}
           <p className="mt-2 text-xs text-slate-500">{status}</p>
         </section>
 
         <aside className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
-          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text wrapper<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><p className="text-xs text-slate-500">The wrapper affects text previews, copied text, and TXT exports.</p><div className="grid grid-cols-2 gap-2"><button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button><button type="button" disabled={!artLines.length} onClick={exportText} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">TXT</button>{mode === "image" ? <button type="button" disabled={!artLines.length} onClick={exportPng} className="rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:opacity-40">PNG</button> : null}<button type="button" disabled={!generatedArt} onClick={() => generatedArt && download(`${exportName}.svg`, generateSvgExport(generatedArt), "image/svg+xml;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">SVG</button><button type="button" disabled={!generatedArt} onClick={() => generatedArt && download(`${exportName}.html`, generateHtmlExport(generatedArt), "text/html;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">HTML</button><button type="button" disabled={!generatedArt} onClick={() => generatedArt && download(`${exportName}.ansi`, generateAnsiExport(generatedArt), "text/plain;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">ANSI</button></div><p className="text-xs text-slate-500">HTML, SVG, and ANSI retain per-character colour.</p></div>
+          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text wrapper<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><p className="text-xs text-slate-500">The wrapper affects text previews, copied text, and TXT exports.</p><div className="grid grid-cols-2 gap-2"><button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button><button type="button" disabled={!artLines.length} onClick={exportText} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">TXT</button>{mode === "image" ? <button type="button" disabled={!artLines.length} onClick={exportPng} className="rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:opacity-40">PNG</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.svg`, generateSvgExport(displayArt), "image/svg+xml;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">SVG</button><button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.html`, generateHtmlExport(displayArt, mode === "text" ? textHtmlOptions : undefined), "text/html;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">HTML</button>{mode === "text" ? <button type="button" disabled={!displayArt} onClick={() => void copyHtml()} className="rounded-sm border border-emerald-300/30 px-3 py-2 text-sm text-emerald-100 transition hover:bg-emerald-300/10 disabled:opacity-40">{htmlCopyState === "copied" ? "HTML copied" : htmlCopyState === "failed" ? "HTML failed" : "Copy HTML"}</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.ansi`, generateAnsiExport(displayArt), "text/plain;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">ANSI</button></div><p className="text-xs text-slate-500">HTML, SVG, and ANSI retain the displayed per-character colour.</p></div>
 
           {mode === "image" ? <>
           <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
