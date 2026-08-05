@@ -27,7 +27,7 @@ const RESOLUTION_OPTIONS: ResolutionKey[] = ["low", "medium", "high", "ultra"];
 const PLACEHOLDER_PRESETS = ["Terminal", "Cyberpunk", "Retro", "Medieval", "Minimal"];
 
 const clampResolution = (value: number) => Math.min(3, Math.max(0, value));
-const USAGE_STORAGE_KEY = "halftone:render-count";
+const USAGE_ENDPOINT = "/api/uses";
 
 const ASCII_LOGO = [
   "██╗  ██╗ █████╗ ██╗     ████████╗ ██████╗ ███╗   ██╗████████╗ ██████╗ ███╗   ██╗███████╗",
@@ -65,17 +65,45 @@ export default function Home() {
   const paletteDefinition = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
 
   useEffect(() => {
-    const storedValue = window.localStorage.getItem(USAGE_STORAGE_KEY);
-    const parsedValue = storedValue ? Number.parseInt(storedValue, 10) : 0;
-    setRenderCount(Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0);
+    let cancelled = false;
+
+    const loadUsageCount = async () => {
+      try {
+        const response = await fetch(USAGE_ENDPOINT, { cache: "no-store" });
+        if (!response.ok) {
+          return;
+        }
+
+        const data = (await response.json()) as { count?: number };
+        if (!cancelled && typeof data.count === "number") {
+          setRenderCount(data.count);
+        }
+      } catch {
+        return;
+      }
+    };
+
+    void loadUsageCount();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const incrementUsage = () => {
-    setRenderCount((currentValue) => {
-      const nextValue = currentValue + 1;
-      window.localStorage.setItem(USAGE_STORAGE_KEY, String(nextValue));
-      return nextValue;
-    });
+  const incrementUsage = async () => {
+    try {
+      const response = await fetch(USAGE_ENDPOINT, { method: "POST" });
+      if (!response.ok) {
+        return;
+      }
+
+      const data = (await response.json()) as { count?: number };
+      if (typeof data.count === "number") {
+        setRenderCount(data.count);
+      }
+    } catch {
+      return;
+    }
   };
 
   const loadFile = async (file: File) => {
@@ -159,7 +187,7 @@ export default function Home() {
       }
 
       setStatus(`Rendered ${generated.columns} x ${generated.rows} characters.`);
-      incrementUsage();
+      await incrementUsage();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
     } finally {
