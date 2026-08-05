@@ -17,7 +17,7 @@ Turn images into character art, or type a phrase to generate copy-ready FIGlet b
 ## Features
 
 - Image mode with ASCII, Braille, Blocks, Unicode, Binary, Matrix, Symbols, and custom glyph sets.
-- Text mode with 48 curated FIGlet styles, including Graffiti, Chiseled, Isometric, Cyberlarge, Fun Faces, Star Wars, and more.
+- Text mode with 38 curated FIGlet styles, including Graffiti, Cyberlarge, Fun Faces, Star Wars, and more.
 - Output formatting for plain ASCII, `//`, `/* */`, SQL, JavaDoc, Bash, SGML, Echo, Python, and Batch comments.
 - Palette-aware text output in Black & White, Green Terminal, Amber CRT, and Blue.
 - PNG and TXT export for image art; TXT export for text art.

@@ -38,7 +38,6 @@ export default function Home() {
   const imageRef = useRef<HTMLImageElement | null>(null);
 
   const [mode, setMode] = useState<"image" | "text">("image");
-  const [fileName, setFileName] = useState("");
   const [status, setStatus] = useState("Choose an image or create an ASCII text banner.");
   const [characterSet, setCharacterSet] = useState<CharacterSetId>("ascii");
   const [customGlyphs, setCustomGlyphs] = useState("ROWAN");
@@ -46,7 +45,7 @@ export default function Home() {
   const [textStyleIndex, setTextStyleIndex] = useState(0);
   const [textOutputFormat, setTextOutputFormat] = useState<TextOutputFormat["id"]>("ascii");
   const [resolutionIndex, setResolutionIndex] = useState(1);
-  const [invert, setInvert] = useState(false);
+  const [invert, setInvert] = useState(true);
   const [palette, setPalette] = useState<PaletteId>("bw");
   const [colorMode, setColorMode] = useState<ColorMode>("colour");
   const [renderCount, setRenderCount] = useState(0);
@@ -145,7 +144,6 @@ export default function Home() {
     if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
     const url = URL.createObjectURL(file);
     fileUrlRef.current = url;
-    setFileName(file.name);
     setMode("image");
     setImageReady(false);
     const image = new Image();
@@ -159,7 +157,7 @@ export default function Home() {
     ? sanitizeCustomCharacters(customGlyphs) || CHARACTER_SETS.ascii
     : CHARACTER_SETS[characterSet], [characterSet, customGlyphs]);
 
-  const exportName = mode === "text" ? textValue.trim().toLowerCase().replace(/\s+/g, "-") || "text-art" : fileName.replace(/\.[^.]+$/, "") || "halftone";
+  const exportName = mode === "text" ? textValue.trim().toLowerCase().replace(/\s+/g, "-") || "text-art" : "halftone";
   const exportText = () => {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([artLines.join("\n")], { type: "text/plain;charset=utf-8" }));
@@ -180,7 +178,7 @@ export default function Home() {
           <section className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3 backdrop-blur-sm">
             <div className={`rounded-md border border-dashed p-3 transition ${isDragging ? "border-emerald-300 bg-emerald-300/10" : "border-white/15 bg-black/40"}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); const file = event.dataTransfer.files.item(0); if (file) loadFile(file); }}>
               <input ref={inputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) loadFile(file); }} />
-              <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Upload image</p><p className="mt-1 font-mono text-[11px] text-slate-400">{fileName || "no file"}</p></div><button type="button" onClick={() => inputRef.current?.click()} className="rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10">Browse</button></div>
+              <div className="flex items-center justify-between gap-2"><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Upload image</p><button type="button" onClick={() => inputRef.current?.click()} className="rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10">Browse</button></div>
             </div>
 
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">

@@ -23,6 +23,21 @@ body {
   box-sizing: border-box;
 }
 
+button:not(:disabled) {
+  cursor: pointer;
+  transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+  border-color: rgba(118, 255, 148, 0.42);
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.18);
+}
+
+button:not(:disabled):active {
+  transform: translateY(0);
+}
+
 ::selection {
   background: rgba(118, 255, 148, 0.25);
 }
@@ -32,4 +47,23 @@ body {
     linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 22px 22px;
+}
+
+.logo-boot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(0deg, transparent 0 2px, rgba(118, 255, 148, 0.06) 2px 3px);
+  opacity: 0;
+}
+
+.logo-boot.is-booting::after {
+  animation: ascii-scan 450ms linear infinite;
+  opacity: 1;
+}
+
+@keyframes ascii-scan {
+  from { transform: translateY(-3px); }
+  to { transform: translateY(3px); }
 }
