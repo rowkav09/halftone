@@ -1,6 +1,6 @@
 import { applyDither } from "@/lib/renderer/dithering";
-import { brailleGlyphAt, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
-import { adjustImageData, combineToneAndEdges, sobelEdges } from "@/lib/renderer/processing";
+import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
+import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
@@ -24,6 +24,7 @@ export const CHARACTER_SETS = {
 } as const;
 
 export type CharacterSetId = keyof typeof CHARACTER_SETS | "custom";
+export type BackgroundCharacterSetId = Exclude<CharacterSetId, "braille" | "custom">;
 export type ColorMode = "colour" | "monochrome";
 export const COLOR_COUNTS = [0, 2, 4, 8, 16] as const;
 export type ColorCount = (typeof COLOR_COUNTS)[number];
@@ -37,6 +38,22 @@ export const PALETTES = [
 
 export type PaletteId = (typeof PALETTES)[number]["id"];
 
+export type BackgroundSeparationOptions = {
+  enabled: boolean;
+  characterSet: BackgroundCharacterSetId;
+  colour: string;
+  threshold: number;
+  softness: number;
+};
+
+export const DEFAULT_BACKGROUND_SEPARATION: BackgroundSeparationOptions = {
+  enabled: false,
+  characterSet: "matrix",
+  colour: "#54717c",
+  threshold: 0.42,
+  softness: 0.16,
+};
+
 export type ArtOptions = {
   columns: number;
   characterSet: CharacterSetId;
@@ -48,6 +65,7 @@ export type ArtOptions = {
   ditherAlgorithm?: DitherAlgorithm;
   renderMode?: RenderMode;
   adjustments?: Partial<ImageAdjustments>;
+  backgroundSeparation?: BackgroundSeparationOptions;
 };
 
 export type GeneratedArt = {
@@ -79,6 +97,22 @@ const getPalette = (palette: PaletteId) => PALETTES.find((option) => option.id =
 const toHexColor = (red: number, green: number, blue: number) => {
   const componentToHex = (component: number) => Math.round(clamp(component, 0, 255)).toString(16).padStart(2, "0");
   return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
+};
+
+const fromHexColor = (color: string): Rgb | null => {
+  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/iu.exec(color);
+  return match ? [Number.parseInt(match[1] ?? "00", 16), Number.parseInt(match[2] ?? "00", 16), Number.parseInt(match[3] ?? "00", 16)] : null;
+};
+
+const blendColors = (background: string, foreground: string, mix: number) => {
+  const from = fromHexColor(background);
+  const to = fromHexColor(foreground);
+  if (!from || !to) return foreground;
+  return toHexColor(
+    from[0] + (to[0] - from[0]) * mix,
+    from[1] + (to[1] - from[1]) * mix,
+    from[2] + (to[2] - from[2]) * mix,
+  );
 };
 
 // Dark source pixels still need enough light to be legible on the black canvas.
@@ -149,6 +183,61 @@ const createCanvas = (width: number, height: number) => {
   return canvas;
 };
 
+/** A tiny source-space blur prevents sharp source pixels from locking to a glyph grid. */
+const prefilterImageData = (source: Uint8ClampedArray, width: number, height: number, amount: number) => {
+  if (amount <= 0) return source;
+  const output = new Uint8ClampedArray(source.length);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const target = (y * width + x) * 4;
+      for (let channel = 0; channel < 4; channel += 1) {
+        let total = 0;
+        let weight = 0;
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const sampleX = Math.min(width - 1, Math.max(0, x + offsetX));
+            const sampleY = Math.min(height - 1, Math.max(0, y + offsetY));
+            const sampleWeight = offsetX === 0 && offsetY === 0 ? 4 : 1;
+            total += (source[(sampleY * width + sampleX) * 4 + channel] ?? 0) * sampleWeight;
+            weight += sampleWeight;
+          }
+        }
+        const original = source[target + channel] ?? 0;
+        output[target + channel] = Math.round(original * (1 - amount) + total / weight * amount);
+      }
+    }
+  }
+  return output;
+};
+
+/** Explicit weighted box sampling keeps every output cell independent of source-grid alignment. */
+const areaAverageImageData = (source: Uint8ClampedArray, sourceWidth: number, sourceHeight: number, targetWidth: number, targetHeight: number) => {
+  const output = new Uint8ClampedArray(targetWidth * targetHeight * 4);
+  for (let targetY = 0; targetY < targetHeight; targetY += 1) {
+    const top = targetY * sourceHeight / targetHeight;
+    const bottom = (targetY + 1) * sourceHeight / targetHeight;
+    for (let targetX = 0; targetX < targetWidth; targetX += 1) {
+      const left = targetX * sourceWidth / targetWidth;
+      const right = (targetX + 1) * sourceWidth / targetWidth;
+      const totals = [0, 0, 0, 0];
+      let weight = 0;
+      for (let sourceY = Math.floor(top); sourceY < Math.ceil(bottom); sourceY += 1) {
+        const yOverlap = Math.max(0, Math.min(bottom, sourceY + 1) - Math.max(top, sourceY));
+        for (let sourceX = Math.floor(left); sourceX < Math.ceil(right); sourceX += 1) {
+          const xOverlap = Math.max(0, Math.min(right, sourceX + 1) - Math.max(left, sourceX));
+          const sampleWeight = xOverlap * yOverlap;
+          const sourceIndex = (sourceY * sourceWidth + sourceX) * 4;
+          for (let channel = 0; channel < 4; channel += 1) totals[channel] += (source[sourceIndex + channel] ?? 0) * sampleWeight;
+          weight += sampleWeight;
+        }
+      }
+      const target = (targetY * targetWidth + targetX) * 4;
+      for (let channel = 0; channel < 4; channel += 1) output[target + channel] = Math.round(totals[channel] / Math.max(weight, 1));
+    }
+  }
+  return output;
+};
+
 const averageCellColour = (data: Uint8ClampedArray, width: number, height: number, cellX: number, cellY: number, sampleWidth: number, sampleHeight: number) => {
   let red = 0;
   let green = 0;
@@ -175,9 +264,57 @@ const renderToneField = (luminance: Float32Array, width: number, height: number,
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const mode = options.renderMode ?? "density";
   // Density mode has no edge component, so avoid the Sobel pass in the common fast path.
-  const edges = mode === "density" ? { values: new Float32Array(base.values.length), width, height } : sobelEdges(base);
+  const edgeDetails = mode === "density" ? null : sobelEdgeDetails(base);
+  const edges = edgeDetails?.edge ?? { values: new Float32Array(base.values.length), width, height };
   const combined = combineToneAndEdges(base, edges, options.invert, mode, adjustments.threshold);
-  return applyDither(combined, options.ditherAlgorithm ?? "none", adjustments.ditherStrength, levels);
+  return { tone: applyDither(combined, options.ditherAlgorithm ?? "none", adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
+};
+
+const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
+  if (edgeStart >= edgeEnd) return value >= edgeStart ? 1 : 0;
+  const step = clamp((value - edgeStart) / (edgeEnd - edgeStart), 0, 1);
+  return step * step * (3 - 2 * step);
+};
+
+/**
+ * A lightweight, deterministic foreground likelihood. It favours pixels that
+ * differ from the frame, have an edge, or sit away from the border. It is an
+ * artistic separator rather than a claim of semantic subject detection.
+ */
+const createForegroundLikelihood = (data: Uint8ClampedArray, luminance: Float32Array, width: number, height: number): ToneField => {
+  let borderRed = 0;
+  let borderGreen = 0;
+  let borderBlue = 0;
+  let borderCount = 0;
+  const addBorder = (x: number, y: number) => {
+    const index = (y * width + x) * 4;
+    borderRed += data[index] ?? 0;
+    borderGreen += data[index + 1] ?? 0;
+    borderBlue += data[index + 2] ?? 0;
+    borderCount += 1;
+  };
+  for (let x = 0; x < width; x += 1) { addBorder(x, 0); if (height > 1) addBorder(x, height - 1); }
+  for (let y = 1; y < height - 1; y += 1) { addBorder(0, y); if (width > 1) addBorder(width - 1, y); }
+  const baseRed = borderRed / Math.max(1, borderCount);
+  const baseGreen = borderGreen / Math.max(1, borderCount);
+  const baseBlue = borderBlue / Math.max(1, borderCount);
+  const edges = sobelEdgeDetails({ values: luminance, width, height }).edge.values;
+  const values = new Float32Array(width * height);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const colorIndex = index * 4;
+      const red = data[colorIndex] ?? 0;
+      const green = data[colorIndex + 1] ?? 0;
+      const blue = data[colorIndex + 2] ?? 0;
+      const colourDistance = Math.sqrt((red - baseRed) ** 2 + (green - baseGreen) ** 2 + (blue - baseBlue) ** 2) / 441.7;
+      const normalX = (x + 0.5) / width - 0.5;
+      const normalY = (y + 0.5) / height - 0.5;
+      const centreWeight = 1 - clamp(Math.hypot(normalX, normalY) / 0.707, 0, 1);
+      values[index] = clamp(colourDistance * 0.62 + (edges[index] ?? 0) * 0.31 + centreWeight * 0.07, 0, 1);
+    }
+  }
+  return { values, width, height };
 };
 
 /**
@@ -188,22 +325,33 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const palette = getPalette(options.palette);
   const isBraille = options.characterSet === "braille";
   const columns = clamp(options.columns, 24, 240);
-  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * 0.55));
+  // Canvas glyphs are approximately 0.6 as wide as they are tall, so rows
+  // must be derived from that physical cell ratio instead of source pixels.
+  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * 0.6));
   const sampleWidth = isBraille ? columns * 2 : columns;
   const sampleHeight = isBraille ? rows * 4 : rows;
-  const sampleCanvas = createCanvas(sampleWidth, sampleHeight);
+  const oversample = 2;
+  const sourceSampleWidth = sampleWidth * oversample;
+  const sourceSampleHeight = sampleHeight * oversample;
+  const sampleCanvas = createCanvas(sourceSampleWidth, sourceSampleHeight);
   const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
   if (!sampleContext) throw new Error("Canvas 2D context is unavailable.");
   sampleContext.imageSmoothingEnabled = true;
-  sampleContext.drawImage(sourceCanvas, 0, 0, sampleWidth, sampleHeight);
+  sampleContext.imageSmoothingQuality = "high";
+  sampleContext.drawImage(sourceCanvas, 0, 0, sourceSampleWidth, sourceSampleHeight);
 
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
-  const sampled = sampleContext.getImageData(0, 0, sampleWidth, sampleHeight).data;
-  const processed = adjustImageData(sampled, sampleWidth, sampleHeight, adjustments);
+  const sampled = sampleContext.getImageData(0, 0, sourceSampleWidth, sourceSampleHeight).data;
+  const prefiltered = prefilterImageData(sampled, sourceSampleWidth, sourceSampleHeight, adjustments.preBlur);
+  const downsampled = areaAverageImageData(prefiltered, sourceSampleWidth, sourceSampleHeight, sampleWidth, sampleHeight);
+  const processed = adjustImageData(downsampled, sampleWidth, sampleHeight, adjustments);
   const rawCharacters = getCharactersForSet(options.characterSet, options.customText);
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
-  const toneField = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, isBraille ? 1 : Math.max(1, genericGlyphs.length - 1));
+  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, isBraille ? 1 : Math.max(1, genericGlyphs.length - 1));
   const imagePalette = options.colorMode === "colour" ? getImagePalette(processed.data, options.colorCount) : null;
+  const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
+  const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
+  const foregroundLikelihood = separation ? createForegroundLikelihood(processed.data, processed.luminance, sampleWidth, sampleHeight) : null;
   const lines: string[] = [];
   const colors: string[][] = [];
   const horizontalSample = sampleWidth / columns;
@@ -216,14 +364,25 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const tone = isBraille
         ? BRAILLE_CELL_DENSITY(toneField, column, row)
         : toneField.values[row * sampleWidth + column] ?? 0;
-      const glyph = isBraille ? brailleGlyphAt(toneField, column, row)
+      const direction = directions?.[isBraille ? (row * 4 + 1) * sampleWidth + column * 2 + 1 : row * sampleWidth + column] ?? 0;
+      const foregroundGlyph = options.renderMode === "edge-direction" ? edgeDirectionGlyphForTone(tone, direction)
+        : isBraille ? brailleGlyphAt(toneField, column, row)
         : options.characterSet === "matrix" || options.characterSet === "symbols" || options.characterSet === "binary"
           ? textureGlyphForTone(tone, options.characterSet, column, row)
           : glyphForTone(tone, genericGlyphs);
+      const likelihood = foregroundLikelihood ? isBraille ? BRAILLE_CELL_DENSITY(foregroundLikelihood, column, row) : foregroundLikelihood.values[row * sampleWidth + column] ?? 0 : 1;
+      const foregroundMix = separation ? smoothstep(separation.threshold - separation.softness, separation.threshold + separation.softness, likelihood) : 1;
+      const backgroundGlyph = separation
+        ? separation.characterSet === "matrix" || separation.characterSet === "symbols" || separation.characterSet === "binary"
+          ? textureGlyphForTone(tone, separation.characterSet, column, row)
+          : glyphForTone(tone, backgroundGlyphs)
+        : foregroundGlyph;
+      const glyph = foregroundMix >= 0.5 ? foregroundGlyph : backgroundGlyph;
       const [red, green, blue] = averageCellColour(processed.data, sampleWidth, sampleHeight, column, row, horizontalSample, verticalSample);
       const [displayRed, displayGreen, displayBlue] = getClosestPaletteColor(red, green, blue, imagePalette);
       line += glyph;
-      rowColors.push(options.colorMode === "colour" ? toReadableColor(displayRed, displayGreen, displayBlue, tone) : palette.foreground);
+      const foregroundColour = options.colorMode === "colour" ? toReadableColor(displayRed, displayGreen, displayBlue, tone) : palette.foreground;
+      rowColors.push(separation ? blendColors(separation.colour, foregroundColour, foregroundMix) : foregroundColour);
     }
     lines.push(line);
     colors.push(rowColors);

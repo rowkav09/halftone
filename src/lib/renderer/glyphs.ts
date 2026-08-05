@@ -43,6 +43,14 @@ export const glyphForTone = (tone: number, glyphs: string[]) => {
   return glyphs[index] ?? glyphs[glyphs.length - 1] ?? " ";
 };
 
+/** Maps a Sobel gradient to the matching tangent stroke: —, /, |, or \\. */
+export const edgeDirectionGlyphForTone = (tone: number, direction: number) => {
+  if (tone < 0.08) return " ";
+  const tangent = direction + Math.PI / 2;
+  const index = ((Math.round(tangent / (Math.PI / 4)) % 4) + 4) % 4;
+  return ["-", "/", "|", "\\"][index] ?? "-";
+};
+
 const glyphHash = (column: number, row: number) => Math.abs((column * 17 + row * 31 + column * row * 7) % 997);
 
 export const textureGlyphForTone = (tone: number, set: "matrix" | "symbols" | "binary", column: number, row: number) => {

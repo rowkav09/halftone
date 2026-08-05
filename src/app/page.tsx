@@ -5,11 +5,14 @@ import { HalftoneLogo } from "@/components/HalftoneLogo";
 import {
   CHARACTER_SETS,
   COLOR_COUNTS,
+  DEFAULT_BACKGROUND_SEPARATION,
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
   PALETTES,
   RENDER_MODES,
   type ArtOptions,
+  type BackgroundCharacterSetId,
+  type BackgroundSeparationOptions,
   type CharacterSetId,
   type ColorCount,
   type ColorMode,
@@ -37,20 +40,34 @@ const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: 
   { id: "custom", label: "Custom glyphs", sample: "ROWAN" },
 ];
 
+const BACKGROUND_CHARACTER_SET_OPTIONS: Array<{ id: BackgroundCharacterSetId; label: string; sample: string }> = [
+  { id: "ascii", label: "ASCII", sample: "@#%*+=-:." },
+  { id: "blocks", label: "Blocks", sample: "█▓▒░" },
+  { id: "unicode", label: "Unicode Dense", sample: "▁▂▃▄▅▆▇█" },
+  { id: "unicodeFine", label: "Unicode Fine", sample: "@#WMW$B8&" },
+  { id: "binary", label: "Binary", sample: "01" },
+  { id: "matrix", label: "Matrix", sample: "ｱｲｳｴｵ0123" },
+  { id: "symbols", label: "Symbols", sample: "!<>/\\|[]{}()" },
+];
+
 const DITHER_LABELS: Record<DitherAlgorithm, string> = {
   none: "None",
   bayer2: "Bayer 2 × 2",
   bayer4: "Bayer 4 × 4",
   bayer8: "Bayer 8 × 8",
+  "blue-noise": "Blue noise",
   "floyd-steinberg": "Floyd–Steinberg",
+  atkinson: "Atkinson",
+  "sierra-lite": "Sierra Lite",
 };
 
-const RENDER_LABELS: Record<RenderMode, string> = { density: "Density", edge: "Edge", hybrid: "Hybrid" };
+const RENDER_LABELS: Record<RenderMode, string> = { density: "Density", edge: "Edge", "edge-direction": "Directional edges", hybrid: "Hybrid" };
 const RESOLUTION_MIN = 48;
 const RESOLUTION_MAX = 240;
 const RESOLUTION_STEP = 4;
 const RESOLUTION_MARKS = [48, 80, 112, 144, 176, 208, 240] as const;
 const USAGE_ENDPOINT = "/api/uses";
+const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const IMAGE_PRESETS: Array<{ id: string; name: string; description: string; characterSet: CharacterSetId; dither: DitherAlgorithm; renderMode: RenderMode; invert: boolean; adjustments: ImageAdjustments }> = [
   { id: "balanced", name: "Balanced", description: "Clean detail with a gentle ordered pattern.", characterSet: "ascii", dither: "bayer4", renderMode: "hybrid", invert: true, adjustments: DEFAULT_IMAGE_ADJUSTMENTS },
@@ -130,6 +147,7 @@ export default function Home() {
   const [ditherAlgorithm, setDitherAlgorithm] = useState<DitherAlgorithm>("none");
   const [renderMode, setRenderMode] = useState<RenderMode>("density");
   const [adjustments, setAdjustments] = useState<ImageAdjustments>(DEFAULT_IMAGE_ADJUSTMENTS);
+  const [backgroundSeparation, setBackgroundSeparation] = useState<BackgroundSeparationOptions>(DEFAULT_BACKGROUND_SEPARATION);
   const [renderCount, setRenderCount] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [htmlCopyState, setHtmlCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -155,7 +173,8 @@ export default function Home() {
     try {
       const response = await fetch(USAGE_ENDPOINT, { method: "POST" });
       const data = response.ok ? await response.json() as { count?: number } : null;
-      if (typeof data?.count === "number") setRenderCount(data.count);
+      const count = data?.count;
+      if (typeof count === "number") setRenderCount((current) => Math.max(current, count));
     } catch { /* Usage tracking must never block browser-side rendering. */ }
   }, []);
 
@@ -169,10 +188,10 @@ export default function Home() {
     setImageReady(false);
     const image = new Image();
     image.decoding = "async";
-    image.onload = () => { imageRef.current = image; setImageReady(true); setStatus("Image loaded. Tune the live renderer below."); void incrementUsage(); };
+    image.onload = () => { imageRef.current = image; setImageReady(true); setStatus("Image loaded. Tune the live renderer below."); };
     image.onerror = () => { setStatus("That file could not be loaded as an image."); setImageReady(false); };
     image.src = url;
-  }, [incrementUsage]);
+  }, []);
 
   const drawGeneratedArt = useCallback((generated: GeneratedArt) => {
     const canvas = previewCanvasRef.current;
@@ -196,15 +215,16 @@ export default function Home() {
     if (!activeTextStyle) return;
     setIsRendering(true);
     try {
-      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments };
+      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation };
       const generated = mode === "text" ? generateCustomTextArt(textValue, activeTextStyle) : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setGeneratedArt(generated);
       if (mode === "image") drawGeneratedArt(generated);
       setStatus(`Rendered ${generated.columns} × ${generated.rows} characters.`);
+      void incrementUsage();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
     } finally { setIsRendering(false); }
-  }, [activeTextStyle, adjustments, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, invert, mode, palette, renderMode, resolutionColumns, textValue]);
+  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
 
   const updateAdjustment = useCallback((key: keyof ImageAdjustments, value: number) => setAdjustments((current) => ({ ...current, [key]: value })), []);
 
@@ -218,7 +238,26 @@ export default function Home() {
     setDitherAlgorithm("none");
     setRenderMode("density");
     setAdjustments(DEFAULT_IMAGE_ADJUSTMENTS);
+    setBackgroundSeparation(DEFAULT_BACKGROUND_SEPARATION);
     setStatus("Image settings reset to the accuracy-first default.");
+  }, []);
+
+  const switchMode = useCallback((nextMode: "image" | "text") => {
+    setMode(nextMode);
+    if (nextMode === "image") {
+      setGeneratedArt(null);
+      setShowComparison(false);
+      setStatus(imageRef.current ? "Restoring the image renderer." : "Choose an image or switch back to text.");
+    }
+  }, []);
+
+  const selectImageColour = useCallback((nextMode: ColorMode, nextPalette?: PaletteId) => {
+    setColorMode(nextMode);
+    if (nextPalette) setPalette(nextPalette);
+    // Do not leave a previously rendered colour treatment on screen while the
+    // live renderer replaces it with the newly selected treatment.
+    setGeneratedArt(null);
+    setShowComparison(false);
   }, []);
 
   const copyText = useCallback(async () => {
@@ -253,7 +292,8 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false;
     void fetch(USAGE_ENDPOINT, { cache: "no-store" }).then((response) => response.ok ? response.json() : null).then((data: { count?: number } | null) => {
-      if (!cancelled && typeof data?.count === "number") setRenderCount(data.count);
+      const count = data?.count;
+      if (!cancelled && typeof count === "number") setRenderCount((current) => Math.max(current, count));
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
@@ -283,7 +323,7 @@ export default function Home() {
   useEffect(() => {
     const hydrate = () => {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("v") !== "2") {
+      if (params.get("v") !== "2" && params.get("v") !== "3") {
         // Older builds accidentally serialised empty settings as zeroes. Do not
         // restore those destructive values into the new renderer.
         if (params.size > 0) window.history.replaceState(null, "", window.location.pathname);
@@ -300,17 +340,28 @@ export default function Home() {
       const queryDither = params.get("dither") as DitherAlgorithm | null;
       const queryMode = params.get("render") as RenderMode | null;
       const queryPalette = params.get("palette") as PaletteId | null;
+      const queryBackgroundSet = params.get("backgroundSet") as BackgroundCharacterSetId | null;
       const queryGlyphs = params.get("glyphs");
       if (queryCharacterSet && (queryCharacterSet === "custom" || queryCharacterSet in CHARACTER_SETS)) setCharacterSet(queryCharacterSet);
       if (queryGlyphs !== null) setCustomGlyphs(queryGlyphs);
       if (queryDither && DITHER_ALGORITHMS.includes(queryDither)) setDitherAlgorithm(queryDither);
       if (queryMode && RENDER_MODES.includes(queryMode)) setRenderMode(queryMode);
       if (queryPalette && PALETTES.some((item) => item.id === queryPalette)) setPalette(queryPalette);
+      if (queryBackgroundSet && BACKGROUND_CHARACTER_SET_OPTIONS.some((item) => item.id === queryBackgroundSet)) {
+        setBackgroundSeparation((current) => ({ ...current, characterSet: queryBackgroundSet }));
+      }
       setResolutionColumns(Math.min(RESOLUTION_MAX, Math.max(RESOLUTION_MIN, numeric("res", resolutionColumns))));
       setInvert(params.get("invert") !== "0");
       setColorMode(params.get("colour") === "mono" ? "monochrome" : "colour");
       setColorCount(COLOR_COUNTS.includes(numeric("colors", colorCount) as ColorCount) ? numeric("colors", colorCount) as ColorCount : colorCount);
-      setAdjustments({ brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
+      setAdjustments({ brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), preBlur: numeric("preblur", DEFAULT_IMAGE_ADJUSTMENTS.preBlur), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
+      setBackgroundSeparation((current) => ({
+        ...current,
+        enabled: params.get("background") === "1",
+        colour: /^#[\da-f]{6}$/iu.test(params.get("backgroundColour") ?? "") ? params.get("backgroundColour") ?? current.colour : current.colour,
+        threshold: clampNumber(numeric("backgroundThreshold", current.threshold), 0.05, 0.95),
+        softness: clampNumber(numeric("backgroundSoftness", current.softness), 0.02, 0.45),
+      }));
       urlHydratedRef.current = true;
     };
     const timer = window.setTimeout(hydrate, 0);
@@ -322,7 +373,7 @@ export default function Home() {
   useEffect(() => {
     if (!urlHydratedRef.current) return;
     const params = new URLSearchParams();
-    params.set("v", "2");
+    params.set("v", "3");
     params.set("res", String(resolutionColumns));
     params.set("set", characterSet);
     params.set("glyphs", customGlyphs);
@@ -332,16 +383,22 @@ export default function Home() {
     params.set("palette", palette);
     params.set("colour", colorMode === "colour" ? "colour" : "mono");
     params.set("colors", String(colorCount));
+    params.set("background", backgroundSeparation.enabled ? "1" : "0");
+    params.set("backgroundSet", backgroundSeparation.characterSet);
+    params.set("backgroundColour", backgroundSeparation.colour);
+    params.set("backgroundThreshold", String(backgroundSeparation.threshold));
+    params.set("backgroundSoftness", String(backgroundSeparation.softness));
     params.set("bright", String(adjustments.brightness));
     params.set("contrast", String(adjustments.contrast));
     params.set("gamma", String(adjustments.gamma));
     params.set("sat", String(adjustments.saturation));
     params.set("threshold", String(adjustments.threshold));
     params.set("strength", String(adjustments.ditherStrength));
+    params.set("preblur", String(adjustments.preBlur));
     params.set("sharp", String(adjustments.sharpness));
     params.set("blur", String(adjustments.blur));
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [adjustments, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, invert, palette, renderMode, resolutionColumns]);
+  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, invert, palette, renderMode, resolutionColumns]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -388,13 +445,14 @@ export default function Home() {
 
           <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">
             <h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Create from</h2>
-            <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => setMode("image")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "image" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Image</button><button type="button" onClick={() => setMode("text")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "text" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Text</button></div>
+            <div className="grid grid-cols-2 gap-2"><button type="button" onClick={() => switchMode("image")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "image" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Image</button><button type="button" onClick={() => switchMode("text")} className={`rounded-sm border px-3 py-2 text-sm transition hover:bg-white/10 ${mode === "text" ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>Text</button></div>
             {mode === "text" ? <><textarea value={textValue} onChange={(event) => setTextValue(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="HELLO" /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text style<select value={textStyleIndex} onChange={(event) => setTextStyleIndex(Number(event.target.value))} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{CUSTOM_TEXT_STYLES.map((style, index) => <option key={style.id} value={index}>{style.name}</option>)}</select></label><div className="space-y-3 border-t border-white/10 pt-3"><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Colour treatment<select value={figletColourSettings.style} onChange={(event) => updateFigletColour("style", event.target.value as FigletColourSettings["style"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{FIGLET_COLOUR_STYLES.map((style) => <option key={style.id} value={style.id}>{style.name}</option>)}</select></label>{figletColourSettings.style === "solid" ? <label className="flex items-center justify-between text-xs text-slate-300"><span>Solid colour</span><input aria-label="Solid text colour" type="color" value={figletColourSettings.solid} onChange={(event) => updateFigletColour("solid", event.target.value)} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label> : null}{figletColourSettings.style === "horizontal" || figletColourSettings.style === "vertical" ? <div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">Start<input aria-label="Gradient start colour" type="color" value={figletColourSettings.gradientStart} onChange={(event) => updateFigletColour("gradientStart", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">End<input aria-label="Gradient end colour" type="color" value={figletColourSettings.gradientEnd} onChange={(event) => updateFigletColour("gradientEnd", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div> : null}{figletColourSettings.style === "custom" ? <div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">First colour<input aria-label="Custom gradient first colour" type="color" value={figletColourSettings.customStart} onChange={(event) => updateFigletColour("customStart", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">Second colour<input aria-label="Custom gradient second colour" type="color" value={figletColourSettings.customEnd} onChange={(event) => updateFigletColour("customEnd", event.target.value)} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div> : null}<label className="flex items-center justify-between text-xs text-slate-300"><span>Include background</span><input aria-label="Include background colour" type="checkbox" checked={figletColourSettings.includeBackground} onChange={(event) => updateFigletColour("includeBackground", event.target.checked)} className="h-4 w-4 accent-emerald-300" /></label>{figletColourSettings.includeBackground && figletColourSettings.style !== "terminal" && figletColourSettings.style !== "amber" ? <label className="flex items-center justify-between text-xs text-slate-300"><span>Background colour</span><input aria-label="Text background colour" type="color" value={figletColourSettings.background} onChange={(event) => updateFigletColour("background", event.target.value)} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label> : null}<RangeControl label="Line height" value={figletColourSettings.lineHeight} min={0.75} max={1.6} step={0.05} onChange={(value) => updateFigletColour("lineHeight", value)} format={(value) => value.toFixed(2)} /></div></> : null}
           </div>
 
           {mode === "image" ? <>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Presets</h2><div className="grid gap-1.5">{IMAGE_PRESETS.map((preset) => <button key={preset.id} type="button" title={preset.description} onClick={() => applyPreset(preset)} className="rounded-sm border border-white/10 px-3 py-2 text-left transition hover:-translate-y-px hover:border-emerald-300/40 hover:bg-emerald-300/10 active:translate-y-0"><span className="block text-sm text-white">{preset.name}</span><span className="block text-[10px] text-slate-500">{preset.description}</span></button>)}</div></div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Character set</h2><select value={characterSet} onChange={(event) => setCharacterSet(event.target.value as CharacterSetId)} className="w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/40">{CHARACTER_SET_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><p className="font-mono text-[10px] text-slate-500">{CHARACTER_SET_OPTIONS.find((option) => option.id === characterSet)?.sample}</p>{characterSet === "custom" ? <textarea value={customGlyphs} onChange={(event) => setCustomGlyphs(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="@#%" /> : null}<p className="text-xs text-slate-500">Generic and custom sets are ordered by measured glyph density.</p></div>
+            <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Foreground / background</h2><p className="mt-1 text-xs text-slate-500">Keep the subject detailed while the background becomes quieter.</p></div><button type="button" onClick={() => setBackgroundSeparation((current) => ({ ...current, enabled: !current.enabled }))} className={`h-7 w-12 shrink-0 rounded-sm border transition ${backgroundSeparation.enabled ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Separate foreground and background" aria-pressed={backgroundSeparation.enabled}><span className={`block h-4 w-4 rounded-sm bg-white transition ${backgroundSeparation.enabled ? "translate-x-6" : "translate-x-1"}`} /></button></div>{backgroundSeparation.enabled ? <div className="space-y-3 border-t border-white/[0.07] pt-3"><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Background glyphs<select value={backgroundSeparation.characterSet} onChange={(event) => setBackgroundSeparation((current) => ({ ...current, characterSet: event.target.value as BackgroundCharacterSetId }))} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{BACKGROUND_CHARACTER_SET_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label><label className="flex items-center justify-between text-xs text-slate-300"><span>Background tint</span><input aria-label="Background tint" type="color" value={backgroundSeparation.colour} onChange={(event) => setBackgroundSeparation((current) => ({ ...current, colour: event.target.value }))} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label><RangeControl label="Subject separation" value={backgroundSeparation.threshold} min={0.05} max={0.95} step={0.05} onChange={(value) => setBackgroundSeparation((current) => ({ ...current, threshold: value }))} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Edge blend" value={backgroundSeparation.softness} min={0.02} max={0.45} step={0.01} onChange={(value) => setBackgroundSeparation((current) => ({ ...current, softness: value }))} format={(value) => `${Math.round(value * 100)}%`} /></div> : null}</div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex justify-between text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Resolution</span><span>{resolutionColumns} columns</span></div><div className="relative"><input type="range" min={RESOLUTION_MIN} max={RESOLUTION_MAX} step={RESOLUTION_STEP} value={resolutionColumns} onChange={(event) => setResolutionColumns(Number(event.target.value))} className="h-2 w-full accent-emerald-300" /><div aria-hidden className="pointer-events-none absolute inset-x-1 top-1/2 flex -translate-y-1/2 justify-between">{RESOLUTION_MARKS.map((mark) => <span key={mark} className={`h-1.5 w-1.5 rounded-sm ${resolutionColumns >= mark ? "bg-emerald-200" : "bg-slate-600"}`} />)}</div></div><div className="flex justify-between text-[9px] uppercase text-slate-500">{RESOLUTION_MARKS.map((mark) => <span key={mark}>{mark}</span>)}</div></div>
             <button type="button" onClick={resetImageSettings} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:-translate-y-px hover:border-white/30 hover:bg-white/10 active:translate-y-0">Reset image settings <span className="text-slate-500">R</span></button>
           </> : null}
@@ -413,9 +471,9 @@ export default function Home() {
           {mode === "image" ? <>
           <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
 
-          {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /></div> : null}
+          {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /></div> : null}
 
-          <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2><button type="button" onClick={() => setColorMode("colour")} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">Colour</span><span className="h-3 w-3 rounded-sm bg-gradient-to-br from-rose-400 via-amber-300 to-sky-400" /></button>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => { setPalette(option.id); setColorMode("monochrome"); }} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "monochrome" && palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: option.foreground }} /></button>)}{colorMode === "colour" ? <div className="border-t border-white/10 pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>Image colours</span><span>{colorCount === 0 ? "Full" : colorCount}</span></div><div className="grid grid-cols-5 gap-1">{COLOR_COUNTS.map((count) => <button key={count} type="button" onClick={() => setColorCount(count)} className={`rounded-sm border px-1 py-2 text-xs transition hover:bg-white/10 ${colorCount === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count === 0 ? "Full" : count}</button>)}</div></div> : null}</div>
+          <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2><button type="button" onClick={() => selectImageColour("colour")} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">Colour</span><span className="h-3 w-3 rounded-sm bg-gradient-to-br from-rose-400 via-amber-300 to-sky-400" /></button>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => selectImageColour("monochrome", option.id)} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "monochrome" && palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: option.foreground }} /></button>)}{colorMode === "colour" ? <div className="border-t border-white/10 pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>Image colours</span><span>{colorCount === 0 ? "Full" : colorCount}</span></div><div className="grid grid-cols-5 gap-1">{COLOR_COUNTS.map((count) => <button key={count} type="button" onClick={() => { setColorCount(count); setGeneratedArt(null); setShowComparison(false); }} className={`rounded-sm border px-1 py-2 text-xs transition hover:bg-white/10 ${colorCount === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count === 0 ? "Full" : count}</button>)}</div></div> : null}</div>
           </> : null}
           <div className="rounded-md border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{generatedArt?.columns || resolutionColumns}</span></div><div className="mt-2 flex justify-between"><span>Shortcuts</span><span className="font-mono text-xs">U upload · C copy · R reset</span></div></div>
         </aside>

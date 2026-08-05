@@ -80,7 +80,12 @@ export const adjustImageData = (
 };
 
 export const sobelEdges = (field: ToneField): ToneField => {
+  return sobelEdgeDetails(field).edge;
+};
+
+export const sobelEdgeDetails = (field: ToneField) => {
   const output = new Float32Array(field.values.length);
+  const directions = new Float32Array(field.values.length);
   let strongest = 0;
   const get = (x: number, y: number) => field.values[Math.min(field.height - 1, Math.max(0, y)) * field.width + Math.min(field.width - 1, Math.max(0, x))] ?? 0;
 
@@ -90,20 +95,21 @@ export const sobelEdges = (field: ToneField): ToneField => {
       const vertical = -get(x - 1, y - 1) - 2 * get(x, y - 1) - get(x + 1, y - 1) + get(x - 1, y + 1) + 2 * get(x, y + 1) + get(x + 1, y + 1);
       const magnitude = Math.hypot(horizontal, vertical);
       output[y * field.width + x] = magnitude;
+      directions[y * field.width + x] = Math.atan2(vertical, horizontal);
       strongest = Math.max(strongest, magnitude);
     }
   }
 
   if (strongest > 0) output.forEach((value, index) => { output[index] = clamp(value / strongest); });
-  return { values: output, width: field.width, height: field.height };
+  return { edge: { values: output, width: field.width, height: field.height }, directions };
 };
 
-export const combineToneAndEdges = (luminance: ToneField, edge: ToneField, invert: boolean, mode: "density" | "edge" | "hybrid", threshold: number): ToneField => {
+export const combineToneAndEdges = (luminance: ToneField, edge: ToneField, invert: boolean, mode: "density" | "edge" | "edge-direction" | "hybrid", threshold: number): ToneField => {
   const values = new Float32Array(luminance.values.length);
   for (let index = 0; index < values.length; index += 1) {
     const density = invert ? luminance.values[index] ?? 0 : 1 - (luminance.values[index] ?? 0);
     const edgeValue = edge.values[index] ?? 0;
-    const mixed = mode === "edge" ? edgeValue : mode === "hybrid" ? Math.max(density * 0.78, edgeValue * 1.15) : density;
+    const mixed = mode === "edge" || mode === "edge-direction" ? edgeValue : mode === "hybrid" ? Math.max(density * 0.78, edgeValue * 1.15) : density;
     values[index] = threshold > 0 ? mixed >= threshold ? 1 : 0 : clamp(mixed);
   }
   return { values, width: luminance.width, height: luminance.height };
