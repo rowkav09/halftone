@@ -1,11 +1,13 @@
 # Halftone
 
+[![Total generations](https://img.shields.io/endpoint?url=https%3A%2F%2Fhalftone-black.vercel.app%2Fapi%2Fbadge)](https://halftone-black.vercel.app/)
+
 Turn images into character art, or type a phrase to generate copy-ready FIGlet banners.
 
 ## Features
 
-- Image mode with ASCII, Braille, Blocks, Unicode, and custom glyph sets.
-- Text mode with Standard, Big, Block, Bubble, Digital, Doom, Ghost, Graffiti, Lean, Shadow, Slant, and Small FIGlet styles.
+- Image mode with ASCII, Braille, Blocks, Unicode, Binary, Matrix, Symbols, and custom glyph sets.
+- Text mode with 48 curated FIGlet styles, including Graffiti, Chiseled, Isometric, Cyberlarge, Fun Faces, Star Wars, and more.
 - Output formatting for plain ASCII, `//`, `/* */`, SQL, JavaDoc, Bash, SGML, Echo, Python, and Batch comments.
 - Palette-aware text output in Black & White, Green Terminal, Amber CRT, and Blue.
 - PNG and TXT export for image art; TXT export for text art.
@@ -25,7 +27,6 @@ Generated on the live Halftone site.
  \___|_  /\____|__  /_______ \___  /     |____|   \_______  /\____|__  /_______  /
        \/         \/        \/   \/                       \/         \/        \/
 ```
-
 ### Big — `CREATE`
 
 ```txt
@@ -35,20 +36,4 @@ Generated on the live Halftone site.
  | |    |  _  /|  __|   / /\ \ | |  |  __|
  | |____| | \ \| |____ / ____ \| |  | |____
   \_____|_|  \_\______/_/    \_\_|  |_|______|
-```
-
-### Digital — `PIXELS`
-
-```txt
- +-+-+-+-+-+-+
- |P|I|X|E|L|S|
- +-+-+-+-+-+-+
-```
-
-
-
-## Build
-
-```bash
-npm run build
 ```

@@ -2,6 +2,9 @@ export const CHARACTER_SETS = {
   ascii: " .:-=+*#%@",
   braille: "⣀⣄⣤⣦⣶⣷⣿",
   blocks: " ░▒▓█",
+  binary: "01",
+  matrix: " ｱｲｳｴｵ0123",
+  symbols: " .`'-,^:;!<>/\\|[]{}()",
   unicode: " ▁▂▃▄▅▆▇█▓▒░⢀⢂⢄⢅⢆⢇⢸⣀⣄⣆⣇⣈⣊⣌⣎⣐⣒⣔⣖⣘⣚⣜⣞⣠⣤⣦⣧⣨⣪⣬⣮⣰⣲⣴⣶⣸⣺⣼⣿",
   unicodeFine: " .`^\",:;Il!i><~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$",
 } as const;
@@ -85,9 +88,52 @@ const remapTone = (tone: number) => {
   return clamp(0.5 + (lifted - 0.5) * 1.15, 0, 1);
 };
 
-const getGlyphForTone = (tone: number, characters: string[]) => {
+const bayer4 = [
+  [0, 8, 2, 10],
+  [12, 4, 14, 6],
+  [3, 11, 1, 9],
+  [15, 7, 13, 5],
+];
+
+const getGlyphForTone = (
+  tone: number,
+  characters: string[],
+  characterSet: CharacterSetId,
+  column: number,
+  row: number,
+) => {
   if (characters.length === 0) {
     return " ";
+  }
+
+  if (characterSet === "binary") {
+    // Ordered dithering preserves subtle edges despite 0/1 having equal visual weight.
+    const threshold = (bayer4[row % 4]?.[column % 4] ?? 8) / 16;
+    return tone > threshold ? "1" : "0";
+  }
+
+  if (characterSet === "matrix") {
+    // Keep highlights open, then vary the kana/digit glyphs without losing tonal shape.
+    const adjustedTone = Math.pow(clamp(tone, 0, 1), 1.35);
+    if (adjustedTone < 0.16) {
+      return " ";
+    }
+
+    const glyphs = characters.slice(1);
+    const baseIndex = Math.floor(adjustedTone * (glyphs.length - 1));
+    const variation = (column * 17 + row * 31 + Math.round(tone * 97)) % glyphs.length;
+    const index = adjustedTone > 0.72 ? Math.max(baseIndex, variation) : baseIndex;
+    return glyphs[index] ?? glyphs[glyphs.length - 1] ?? " ";
+  }
+
+  if (characterSet === "symbols") {
+    // Punctuation has irregular visual density, so bias toward a sparse, high-contrast ramp.
+    const adjustedTone = Math.pow(clamp(tone, 0, 1), 1.2);
+    if (adjustedTone < 0.08) {
+      return " ";
+    }
+    const index = Math.round(adjustedTone * (characters.length - 1));
+    return characters[index] ?? characters[characters.length - 1] ?? " ";
   }
 
   const adjustedTone = remapTone(tone);
@@ -135,7 +181,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const blue = sampled[index + 2] ?? 0;
 
       const tone = options.invert ? luminanceFromRgb(red, green, blue) : 1 - luminanceFromRgb(red, green, blue);
-      line += getGlyphForTone(tone, characters);
+      line += getGlyphForTone(tone, characters, options.characterSet, column, row);
       rowColors.push(options.colorMode === "colour" ? toHexColor(red, green, blue) : palette.foreground);
     }
 
