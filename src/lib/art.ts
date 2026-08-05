@@ -8,7 +8,7 @@ export const CHARACTER_SETS = {
 
 export type CharacterSetId = keyof typeof CHARACTER_SETS | "custom";
 
-export type ColorMode = "original" | "palette";
+export type ColorMode = "colour" | "monochrome";
 
 export type ResolutionKey = "low" | "medium" | "high" | "ultra" | "packed";
 
@@ -48,12 +48,14 @@ export type GeneratedArt = {
   background: string;
 };
 
-export type TextArtStyle = {
+export type StyledTextTypography = {
   fontWeight: number;
   italic: boolean;
   scaleX: number;
   skew: number;
   outline: number;
+  shadowOffset?: number;
+  fontFamily?: "sans" | "mono";
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -110,7 +112,7 @@ const createCanvas = (width: number, height: number) => {
   return canvas;
 };
 
-const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: ArtOptions): GeneratedArt => {
+export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: ArtOptions): GeneratedArt => {
   const palette = getPalette(options.palette);
   const characters = getOrderedCharacters(getCharactersForSet(options.characterSet, options.customText));
   const { width, height } = sourceCanvas;
@@ -144,7 +146,7 @@ const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: ArtOpti
 
       const tone = options.invert ? luminanceFromRgb(red, green, blue) : 1 - luminanceFromRgb(red, green, blue);
       line += getGlyphForTone(tone, characters);
-      rowColors.push(options.colorMode === "original" ? toHexColor(red, green, blue) : palette.foreground);
+      rowColors.push(options.colorMode === "colour" ? toHexColor(red, green, blue) : palette.foreground);
     }
 
     lines.push(line);
@@ -176,23 +178,26 @@ export async function generateArtFromImage(
 
   sourceContext.drawImage(image, 0, 0);
   return generateArtFromCanvas(sourceCanvas, options);
-}
+};
 
-const normalizeBannerText = (value: string) => value.replace(/\s+/g, " ").trim().toUpperCase() || "HALFTONE";
+const normalizeStyledText = (value: string, fallback: string) => value.replace(/\s+/g, " ").trim().toUpperCase() || fallback;
 
-const fitBannerText = (
+const fitStyledText = (
   context: CanvasRenderingContext2D,
   text: string,
   width: number,
   height: number,
   scaleX: number,
+  fontFamily: "sans" | "mono",
 ) => {
-  const words = normalizeBannerText(text).split(" ");
+  const normalized = normalizeStyledText(text, "TEXT");
+  const words = normalized.split(" ");
   let fontSize = Math.floor(height * 0.72);
-  let lines = [normalizeBannerText(text)];
+  let lines = [normalized];
+  const fontStack = fontFamily === "mono" ? "var(--font-mono), monospace" : "var(--font-sans), sans-serif";
 
   while (fontSize >= 20) {
-    context.font = `${fontSize}px var(--font-sans), sans-serif`;
+    context.font = `${fontSize}px ${fontStack}`;
     const lineGap = Math.max(6, Math.round(fontSize * 0.15));
     const limit = width * 0.86 / scaleX;
 
@@ -216,7 +221,7 @@ const fitBannerText = (
         wrapped.push(currentLine);
       }
     } else {
-      wrapped.push(words[0] ?? "HALFTONE");
+      wrapped.push(words[0] ?? normalized);
     }
 
     const widest = wrapped.reduce((maxWidth, line) => Math.max(maxWidth, context.measureText(line).width), 0) * scaleX;
@@ -230,13 +235,13 @@ const fitBannerText = (
     fontSize -= 2;
   }
 
-  return { fontSize, lines };
+  return { fontSize, lines, fontStack };
 };
 
-export async function generateArtFromText(
+export async function generateHalftoneFromStyledText(
   text: string,
   options: ArtOptions,
-  style: TextArtStyle,
+  typography: StyledTextTypography,
 ): Promise<GeneratedArt> {
   const sourceWidth = clamp(Math.round(options.columns * 15), 960, 2400);
   const sourceHeight = Math.round(sourceWidth / 4.25);
@@ -247,6 +252,8 @@ export async function generateArtFromText(
     throw new Error("Canvas 2D context is unavailable.");
   }
 
+  const fontFamily = typography.fontFamily ?? "sans";
+
   context.fillStyle = "#f4f8ff";
   context.fillRect(0, 0, sourceWidth, sourceHeight);
   context.fillStyle = "#050810";
@@ -254,26 +261,34 @@ export async function generateArtFromText(
   context.textBaseline = "middle";
   context.lineJoin = "round";
 
-  const { fontSize, lines } = fitBannerText(context, text, sourceWidth, sourceHeight, style.scaleX);
+  const { fontSize, lines, fontStack } = fitStyledText(context, text, sourceWidth, sourceHeight, typography.scaleX, fontFamily);
   const lineGap = Math.max(6, Math.round(fontSize * 0.15));
   const totalHeight = lines.length * fontSize + Math.max(0, lines.length - 1) * lineGap;
   const startY = sourceHeight / 2 - totalHeight / 2 + fontSize / 2;
 
   context.save();
   context.translate(sourceWidth / 2, sourceHeight / 2);
-  context.transform(style.scaleX, 0, Math.tan((style.skew * Math.PI) / 180), 1, 0, 0);
+  context.transform(typography.scaleX, 0, Math.tan((typography.skew * Math.PI) / 180), 1, 0, 0);
   context.translate(-sourceWidth / 2, -sourceHeight / 2);
-  context.font = `${style.italic ? "italic " : ""}${style.fontWeight} ${fontSize}px var(--font-sans), sans-serif`;
+  context.font = `${typography.italic ? "italic " : ""}${typography.fontWeight} ${fontSize}px ${fontStack}`;
 
   lines.forEach((line, index) => {
     const y = startY + index * (fontSize + lineGap);
-    if (style.outline > 0) {
-      context.strokeStyle = "rgba(7, 11, 20, 0.95)";
-      context.lineWidth = style.outline;
-      context.strokeText(line, sourceWidth / 2, y);
+    const centerX = sourceWidth / 2;
+
+    if (typography.shadowOffset && typography.shadowOffset > 0) {
+      context.fillStyle = "rgba(7, 11, 20, 0.42)";
+      context.fillText(line, centerX + typography.shadowOffset, y + typography.shadowOffset);
+      context.fillStyle = "#050810";
     }
 
-    context.fillText(line, sourceWidth / 2, y);
+    if (typography.outline > 0) {
+      context.strokeStyle = "rgba(7, 11, 20, 0.95)";
+      context.lineWidth = typography.outline;
+      context.strokeText(line, centerX, y);
+    }
+
+    context.fillText(line, centerX, y);
   });
 
   context.restore();
