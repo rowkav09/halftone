@@ -23,6 +23,12 @@ Turn images into character art, or type a phrase to generate copy-ready FIGlet b
 - PNG and TXT export for image art; TXT export for text art.
 - A live generations badge backed by Upstash Redis.
 
+## Operations
+
+The usage counter and `POST /api/uses` require an Upstash Redis REST URL and token. Configure `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (or the documented Vercel KV aliases in `.env.example`). If Redis is missing or unavailable, `POST /api/uses` intentionally responds with `503` without provider details; `GET /api/uses` safely reports `count: 0` and `configured: false`.
+
+`POST /api/uses` uses an atomic Redis Lua script for a fixed-window limiter. Defaults are 30 requests per 60 seconds and can be bounded with `USAGE_RATE_LIMIT_MAX` and `USAGE_RATE_LIMIT_WINDOW_SECONDS`. On Vercel, the limiter keys requests by a SHA-256-truncated `x-vercel-forwarded-for` value; this header is trusted only when `VERCEL=1`. Outside Vercel, malformed values, or absent headers, it deliberately falls back to one shared key rather than trusting client-supplied forwarding headers. This avoids per-client bypasses but can throttle all local or non-Vercel traffic together. Limited requests receive `429 {"error":"rate_limited"}` plus `Retry-After` and `X-RateLimit-*` headers.
+
 ## Live examples
 
 Generated on the live [Halftone site](https://halftone-black.vercel.app/).
