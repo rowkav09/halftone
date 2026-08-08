@@ -26,6 +26,7 @@ import {
 } from "@/lib/art";
 import { generateAnsiExport, generateHtmlExport, generateSvgExport } from "@/lib/artExport";
 import { paintBackground, parseBackgroundColour, type Background } from "@/lib/background";
+import type { ColourTreatment } from "@/lib/colourTreatment";
 import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatGeneratedTextOutput, generateCustomTextArt } from "@/lib/customText";
 import { DEFAULT_FIGLET_COLOUR_SETTINGS, FIGLET_COLOUR_STYLES, applyFigletColours, getFigletBackground, type FigletColourSettings } from "@/lib/textColour";
 
@@ -145,6 +146,7 @@ export default function Home() {
   const [palette, setPalette] = useState<PaletteId>("bw");
   const [colorMode, setColorMode] = useState<ColorMode>("colour");
   const [colorCount, setColorCount] = useState<ColorCount>(0);
+  const [colourTreatment, setColourTreatment] = useState<ColourTreatment>({ kind: "source" });
   const [ditherAlgorithm, setDitherAlgorithm] = useState<DitherAlgorithm>("none");
   const [renderMode, setRenderMode] = useState<RenderMode>("density");
   const [adjustments, setAdjustments] = useState<ImageAdjustments>(DEFAULT_IMAGE_ADJUSTMENTS);
@@ -216,7 +218,7 @@ export default function Home() {
     if (!activeTextStyle) return;
     setIsRendering(true);
     try {
-      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, background: mode === "image" ? imageBackground : undefined };
+      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, colourTreatment, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, background: mode === "image" ? imageBackground : undefined };
       const generated = mode === "text" ? generateCustomTextArt(textValue, activeTextStyle) : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setGeneratedArt(generated);
       if (mode === "image") drawGeneratedArt(generated);
@@ -225,7 +227,7 @@ export default function Home() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
     } finally { setIsRendering(false); }
-  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, imageBackground, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
+  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, colourTreatment, customGlyphs, ditherAlgorithm, drawGeneratedArt, imageBackground, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
 
   const updateAdjustment = useCallback((key: keyof ImageAdjustments, value: number) => setAdjustments((current) => ({ ...current, [key]: value })), []);
 
@@ -236,6 +238,7 @@ export default function Home() {
     setPalette("bw");
     setColorMode("colour");
     setColorCount(0);
+    setColourTreatment({ kind: "source" });
     setDitherAlgorithm("none");
     setRenderMode("density");
     setAdjustments(DEFAULT_IMAGE_ADJUSTMENTS);
@@ -251,18 +254,6 @@ export default function Home() {
       setShowComparison(false);
       setStatus(imageRef.current ? "Restoring the image renderer." : "Choose an image or switch back to text.");
     }
-  }, []);
-
-  const selectImageColour = useCallback((nextMode: ColorMode, nextPalette?: PaletteId) => {
-    setColorMode(nextMode);
-    if (nextPalette) {
-      setPalette(nextPalette);
-      setImageBackground((current) => current.kind === "solid" ? { kind: "solid", colour: PALETTES.find((option) => option.id === nextPalette)?.background ?? current.colour } : current);
-    }
-    // Do not leave a previously rendered colour treatment on screen while the
-    // live renderer replaces it with the newly selected treatment.
-    setGeneratedArt(null);
-    setShowComparison(false);
   }, []);
 
   const copyText = useCallback(async () => {
@@ -345,6 +336,7 @@ export default function Home() {
       const queryDither = params.get("dither") as DitherAlgorithm | null;
       const queryMode = params.get("render") as RenderMode | null;
       const queryPalette = params.get("palette") as PaletteId | null;
+      const queryTreatment = params.get("treatment");
       const queryBackgroundSet = params.get("backgroundSet") as BackgroundCharacterSetId | null;
       const queryBackgroundType = params.get("backgroundType");
       const queryGlyphs = params.get("glyphs");
@@ -359,7 +351,19 @@ export default function Home() {
       setResolutionColumns(Math.min(RESOLUTION_MAX, Math.max(RESOLUTION_MIN, numeric("res", resolutionColumns))));
       setInvert(params.get("invert") !== "0");
       setColorMode(params.get("colour") === "mono" ? "monochrome" : "colour");
-      setColorCount(COLOR_COUNTS.includes(numeric("colors", colorCount) as ColorCount) ? numeric("colors", colorCount) as ColorCount : colorCount);
+      const queryColorCount = COLOR_COUNTS.includes(numeric("colors", colorCount) as ColorCount) ? numeric("colors", colorCount) as ColorCount : colorCount;
+      setColorCount(queryColorCount);
+      if (queryTreatment === "monochrome") setColourTreatment({ kind: "monochrome", colour: parseBackgroundColour(params.get("treatmentColour"), "#e8edf2") });
+      else if (queryTreatment === "palette") setColourTreatment({ kind: "palette", count: queryColorCount || 4 });
+      else if (queryTreatment === "duotone") setColourTreatment({ kind: "duotone", shadowColour: parseBackgroundColour(params.get("shadow"), "#101820"), highlightColour: parseBackgroundColour(params.get("highlight"), "#f5f7fa") });
+      else if (queryTreatment === "gradient-map") {
+        const stops = (params.get("stops") ?? "").split(",").filter((stop) => /^#[\da-f]{6}$/iu.test(stop));
+        setColourTreatment({ kind: "gradient-map", stops: stops.length >= 2 ? stops.slice(0, 4) : ["#101820", "#f5f7fa"] });
+      } else if (params.get("colour") === "mono") {
+        setColourTreatment({ kind: "monochrome", colour: PALETTES.find((item) => item.id === (queryPalette ?? palette))?.foreground ?? "#e8edf2" });
+      } else if (queryColorCount > 0) {
+        setColourTreatment({ kind: "palette", count: queryColorCount });
+      } else setColourTreatment({ kind: "source" });
       setAdjustments({ brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), toneLevels: numeric("levels", 0), preBlur: numeric("preblur", DEFAULT_IMAGE_ADJUSTMENTS.preBlur), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
       setBackgroundSeparation((current) => ({
         ...current,
@@ -395,6 +399,14 @@ export default function Home() {
     params.set("palette", palette);
     params.set("colour", colorMode === "colour" ? "colour" : "mono");
     params.set("colors", String(colorCount));
+    params.set("treatment", colourTreatment.kind);
+    if (colourTreatment.kind === "monochrome") params.set("treatmentColour", colourTreatment.colour);
+    if (colourTreatment.kind === "palette") params.set("colors", String(colourTreatment.count));
+    if (colourTreatment.kind === "duotone") {
+      params.set("shadow", colourTreatment.shadowColour);
+      params.set("highlight", colourTreatment.highlightColour);
+    }
+    if (colourTreatment.kind === "gradient-map") params.set("stops", colourTreatment.stops.join(","));
     params.set("background", backgroundSeparation.enabled ? "1" : "0");
     params.set("backgroundSet", backgroundSeparation.characterSet);
     params.set("backgroundColour", backgroundSeparation.colour);
@@ -425,7 +437,7 @@ export default function Home() {
     params.set("sharp", String(adjustments.sharpness));
     params.set("blur", String(adjustments.blur));
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, imageBackground, invert, palette, renderMode, resolutionColumns]);
+  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, colourTreatment, customGlyphs, ditherAlgorithm, imageBackground, invert, palette, renderMode, resolutionColumns]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -501,7 +513,7 @@ export default function Home() {
 
           {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Tone levels" value={adjustments.toneLevels} min={0} max={16} step={1} onChange={(value) => updateAdjustment("toneLevels", value)} format={(value) => value < 2 ? "Auto" : String(value)} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /></div> : null}
 
-          <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2><button type="button" onClick={() => selectImageColour("colour")} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">Colour</span><span className="h-3 w-3 rounded-sm bg-gradient-to-br from-rose-400 via-amber-300 to-sky-400" /></button>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => selectImageColour("monochrome", option.id)} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "monochrome" && palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: option.foreground }} /></button>)}{colorMode === "colour" ? <div className="border-t border-white/10 pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>Image colours</span><span>{colorCount === 0 ? "Full" : colorCount}</span></div><div className="grid grid-cols-5 gap-1">{COLOR_COUNTS.map((count) => <button key={count} type="button" onClick={() => { setColorCount(count); setGeneratedArt(null); setShowComparison(false); }} className={`rounded-sm border px-1 py-2 text-xs transition hover:bg-white/10 ${colorCount === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count === 0 ? "Full" : count}</button>)}</div></div> : null}</div>
+          <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Treatment<select aria-label="Colour treatment" value={colourTreatment.kind} onChange={(event) => { const kind = event.target.value; setColorMode(kind === "monochrome" ? "monochrome" : "colour"); setColourTreatment(kind === "monochrome" ? { kind: "monochrome", colour: activePalette.foreground } : kind === "palette" ? { kind: "palette", count: colorCount || 4 } : kind === "duotone" ? { kind: "duotone", shadowColour: "#101820", highlightColour: "#f5f7fa" } : kind === "gradient-map" ? { kind: "gradient-map", stops: ["#101820", "#f5f7fa"] } : { kind: "source" }); setGeneratedArt(null); setShowComparison(false); }} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white"><option value="source">Source colours</option><option value="monochrome">Monochrome</option><option value="palette">Palette</option><option value="duotone">Duotone</option><option value="gradient-map">Gradient map</option></select></label>{colourTreatment.kind === "monochrome" ? <div className="grid grid-cols-2 gap-1">{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => { setPalette(option.id); setColourTreatment({ kind: "monochrome", colour: option.foreground }); setImageBackground((current) => current.kind === "solid" ? { kind: "solid", colour: option.background } : current); }} className={`rounded-sm border px-2 py-2 text-xs ${palette === option.id ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{option.name}</button>)}</div> : null}{colourTreatment.kind === "palette" ? <div className="grid grid-cols-4 gap-1">{COLOR_COUNTS.filter((count) => count > 0).map((count) => <button key={count} type="button" onClick={() => { setColorCount(count); setColourTreatment({ kind: "palette", count }); setGeneratedArt(null); }} className={`rounded-sm border px-2 py-2 text-xs ${colourTreatment.count === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count}</button>)}</div> : null}{colourTreatment.kind === "duotone" ? <div className="grid grid-cols-2 gap-2"><label className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Shadow<input aria-label="Duotone shadow" type="color" value={colourTreatment.shadowColour} onChange={(event) => setColourTreatment({ ...colourTreatment, shadowColour: event.target.value })} className="mt-1 h-8 w-full" /></label><label className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Highlight<input aria-label="Duotone highlight" type="color" value={colourTreatment.highlightColour} onChange={(event) => setColourTreatment({ ...colourTreatment, highlightColour: event.target.value })} className="mt-1 h-8 w-full" /></label></div> : null}{colourTreatment.kind === "gradient-map" ? <div className="space-y-1">{colourTreatment.stops.map((stop, index) => <label key={`${index}-${stop}`} className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-slate-500">Stop {index + 1}<input aria-label={`Gradient map stop ${index + 1}`} type="color" value={stop} onChange={(event) => setColourTreatment({ ...colourTreatment, stops: colourTreatment.stops.map((value, stopIndex) => stopIndex === index ? event.target.value : value) })} className="h-7 flex-1" /></label>)}{colourTreatment.stops.length < 4 ? <button type="button" onClick={() => setColourTreatment({ ...colourTreatment, stops: [...colourTreatment.stops, "#ffffff"] })} className="w-full rounded-sm border border-white/10 px-2 py-1 text-xs text-slate-300">Add stop</button> : null}{colourTreatment.stops.length > 2 ? <button type="button" onClick={() => setColourTreatment({ ...colourTreatment, stops: colourTreatment.stops.slice(0, -1) })} className="w-full rounded-sm border border-white/10 px-2 py-1 text-xs text-slate-300">Remove stop</button> : null}</div> : null}</div>
           </> : null}
           <div className="rounded-md border border-white/10 bg-black/40 p-3 text-sm text-slate-300"><div className="mb-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">Stats</div><div className="flex justify-between"><span>Characters</span><span>{characterSetDisplay.length}</span></div><div className="mt-2 flex justify-between"><span>Columns</span><span>{generatedArt?.columns || resolutionColumns}</span></div><div className="mt-2 flex justify-between"><span>Shortcuts</span><span className="font-mono text-xs">U upload · C copy · R reset</span></div></div>
         </aside>

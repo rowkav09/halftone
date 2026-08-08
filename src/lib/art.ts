@@ -1,9 +1,10 @@
 import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
-import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { adjustImageData, combineToneAndEdges, luminanceFromRgb, sobelEdgeDetails } from "@/lib/renderer/processing";
 import { applyToneCurve } from "@/lib/renderer/tone";
 import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
 import { interpolateColour, isHexColour, rgbToHex, type Rgb } from "@/lib/colour";
+import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
@@ -69,6 +70,7 @@ export type ArtOptions = {
   adjustments?: Partial<ImageAdjustments>;
   backgroundSeparation?: BackgroundSeparationOptions;
   background?: Background;
+  colourTreatment?: ColourTreatment;
 };
 
 export type GeneratedArt = {
@@ -79,6 +81,7 @@ export type GeneratedArt = {
   foreground: string;
   background: Background;
   backgroundColour: string;
+  colourTreatment: ColourTreatment;
 };
 
 export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, RENDER_MODES };
@@ -115,13 +118,6 @@ const toReadableColor = (red: number, green: number, blue: number, tone: number)
   return rgbToHex(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
 };
 
-const squaredDistance = (first: Rgb, second: Rgb) => {
-  const red = first[0] - second[0];
-  const green = first[1] - second[1];
-  const blue = first[2] - second[2];
-  return red * red + green * green + blue * blue;
-};
-
 const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rgb[] | null => {
   if (colorCount === 0) return null;
   const samples: Rgb[] = [];
@@ -138,7 +134,9 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
     let candidate = samples[0] ?? [0, 0, 0];
     let greatestDistance = -1;
     for (const sample of samples) {
-      const nearest = Math.min(...centers.map((center) => squaredDistance(sample, center)));
+      const nearest = Math.min(...centers.map((center) => (
+        (sample[0] - center[0]) ** 2 + (sample[1] - center[1]) ** 2 + (sample[2] - center[2]) ** 2
+      )));
       if (nearest > greatestDistance) { greatestDistance = nearest; candidate = sample; }
     }
     centers.push(candidate);
@@ -150,7 +148,7 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
       let nearestIndex = 0;
       let nearestDistance = Infinity;
       centers.forEach((center, index) => {
-        const distance = squaredDistance(sample, center);
+        const distance = (sample[0] - center[0]) ** 2 + (sample[1] - center[1]) ** 2 + (sample[2] - center[2]) ** 2;
         if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
       });
       const total = totals[nearestIndex];
@@ -167,7 +165,11 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
 const getClosestPaletteColor = (red: number, green: number, blue: number, palette: Rgb[] | null): Rgb => {
   if (!palette?.length) return [red, green, blue];
   const color: Rgb = [red, green, blue];
-  return palette.reduce((closest, candidate) => squaredDistance(color, candidate) < squaredDistance(color, closest) ? candidate : closest);
+  return palette.reduce((closest, candidate) => {
+    const distance = (color[0] - candidate[0]) ** 2 + (color[1] - candidate[1]) ** 2 + (color[2] - candidate[2]) ** 2;
+    const closestDistance = (color[0] - closest[0]) ** 2 + (color[1] - closest[1]) ** 2 + (color[2] - closest[2]) ** 2;
+    return distance < closestDistance ? candidate : closest;
+  });
 };
 
 const createCanvas = (width: number, height: number) => {
@@ -347,7 +349,11 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const rawCharacters = getCharactersForSet(options.characterSet, options.customText);
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
   const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, Math.max(1, genericGlyphs.length - 1), isBraille);
-  const imagePalette = options.colorMode === "colour" ? getImagePalette(processed.data, options.colorCount) : null;
+  const treatment: ColourTreatment = options.colourTreatment ?? (options.colorMode === "colour"
+    ? options.colorCount > 0 ? { kind: "palette", count: options.colorCount } : { kind: "source" }
+    : { kind: "monochrome", colour: palette.foreground });
+  const imagePalette = getImagePalette(processed.data, treatment.kind === "palette" ? treatment.count : 0);
+  const resolveColour = createColourTreatmentResolver(treatment, imagePalette ?? []);
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
   const foregroundLikelihood = separation ? createForegroundLikelihood(processed.data, processed.luminance, sampleWidth, sampleHeight) : null;
@@ -380,14 +386,16 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const [red, green, blue] = averageCellColour(processed.data, sampleWidth, sampleHeight, column, row, horizontalSample, verticalSample);
       const [displayRed, displayGreen, displayBlue] = getClosestPaletteColor(red, green, blue, imagePalette);
       line += glyph;
-      const foregroundColour = options.colorMode === "colour" ? toReadableColor(displayRed, displayGreen, displayBlue, tone) : palette.foreground;
+      const readableSource = toReadableColor(displayRed, displayGreen, displayBlue, tone);
+      const sourceLuminance = luminanceFromRgb(red, green, blue) / 255;
+      const foregroundColour = resolveColour([displayRed, displayGreen, displayBlue], sourceLuminance, readableSource);
       rowColors.push(separation ? blendColors(separation.colour, foregroundColour, foregroundMix) : foregroundColour);
     }
     lines.push(line);
     colors.push(rowColors);
   }
   const background = options.background ?? solidBackground(palette.background);
-  return { lines, colors, columns, rows, foreground: palette.foreground, background, backgroundColour: backgroundRepresentativeColour(background, palette.background) };
+  return { lines, colors, columns, rows, foreground: palette.foreground, background, backgroundColour: backgroundRepresentativeColour(background, palette.background), colourTreatment: treatment };
 };
 
 const BRAILLE_CELL_DENSITY = (field: ToneField, cellX: number, cellY: number) => {

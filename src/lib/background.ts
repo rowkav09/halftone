@@ -90,7 +90,7 @@ export const cssBackground = (background: Background) => {
   if (background.kind === "transparent") return undefined;
   if (background.kind === "solid") return safeColour(background.colour, "#000000");
   if (background.kind === "linear") return `linear-gradient(${normaliseAngle(background.angle) + 90}deg, ${safeColour(background.startColour)} 0%, ${safeColour(background.endColour)} 100%)`;
-  return `radial-gradient(circle at ${clampUnit(background.centerX) * 100}% ${clampUnit(background.centerY) * 100}%, ${safeColour(background.innerColour)} 0%, ${safeColour(background.outerColour)} ${clampUnit(background.spread) * 100}%)`;
+  return `radial-gradient(circle at ${clampUnit(background.centerX) * 100}% ${clampUnit(background.centerY) * 100}%, ${safeColour(background.innerColour)} 0%, ${safeColour(background.outerColour)} ${Math.max(0.01, background.spread) * 100}%)`;
 };
 
 export const parseBackgroundColour = (value: string | null, fallback: string) => isHexColour(value ?? undefined) ? value as string : fallback;

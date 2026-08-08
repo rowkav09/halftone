@@ -10,6 +10,7 @@ const art: GeneratedArt = {
   foreground: "#ffffff",
   background: { kind: "solid", colour: "#000000" },
   backgroundColour: "#000000",
+  colourTreatment: { kind: "source" },
 };
 
 describe("figlet text colours", () => {

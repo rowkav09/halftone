@@ -189,6 +189,7 @@ export const generateFigletArt = (text: string, font: string, format: TextOutput
     foreground: "#c8ffbf",
     background: { kind: "solid", colour: "#000000" },
     backgroundColour: "#000000",
+    colourTreatment: { kind: "source" },
   };
   return formatGeneratedTextOutput(art, format);
 };

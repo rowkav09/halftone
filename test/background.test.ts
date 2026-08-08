@@ -11,6 +11,7 @@ const art = (background: Background): GeneratedArt => ({
   foreground: "#ffffff",
   background,
   backgroundColour: "#000000",
+  colourTreatment: { kind: "source" },
 });
 
 describe("background rendering", () => {
@@ -35,5 +36,17 @@ describe("background rendering", () => {
     expect(generateSvgExport(transparent)).not.toContain("<rect");
     expect(generateHtmlExport(transparent)).not.toContain("background:");
     expect(cssBackground(transparent.background)).toBeUndefined();
+  });
+
+  it("preserves radial spreads above one in CSS", () => {
+    const background: Background = {
+      kind: "radial",
+      innerColour: "#ffffff",
+      outerColour: "#000000",
+      centerX: 0.5,
+      centerY: 0.5,
+      spread: 1.75,
+    };
+    expect(cssBackground(background)).toContain("#000000 175%");
   });
 });
