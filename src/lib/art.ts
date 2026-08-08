@@ -184,6 +184,7 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
       const nearest = Math.min(...centers.map((center) => squaredDistance(sample, center)));
       if (nearest > greatestDistance) { greatestDistance = nearest; candidate = sample; }
     }
+    if (greatestDistance <= 0) break;
     centers.push(candidate);
   }
 
@@ -379,10 +380,15 @@ const createForegroundLikelihood = (data: Uint8ClampedArray, luminance: Float32A
 export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: ArtOptions): GeneratedArt => {
   const palette = getPalette(options.palette);
   const isBraille = options.characterSet === "braille";
-  const columns = clamp(options.columns, 24, 240);
+  if (!Number.isFinite(sourceCanvas.width) || !Number.isFinite(sourceCanvas.height) || sourceCanvas.width <= 0 || sourceCanvas.height <= 0) {
+    throw new Error("The image has no usable dimensions.");
+  }
+  const columns = clamp(Number.isFinite(options.columns) ? options.columns : 84, 24, 240);
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
-  const aspectRatio = adjustments.aspectRatio ?? 0.6;
-  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectRatio));
+  const aspectRatio = Number.isFinite(adjustments.aspectRatio) && adjustments.aspectRatio > 0 ? adjustments.aspectRatio : DEFAULT_IMAGE_ADJUSTMENTS.aspectRatio;
+  const uncappedRows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectRatio));
+  const maxCells = 480_000;
+  const rows = Math.min(uncappedRows, Math.max(1, Math.floor(maxCells / columns)));
 
   const sampleWidth = isBraille ? columns * 2 : columns;
   const sampleHeight = isBraille ? rows * 4 : rows;

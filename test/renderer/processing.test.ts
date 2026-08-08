@@ -19,6 +19,25 @@ describe("renderer processing", () => {
     expect(Array.from(source)).toEqual([10, 20, 30, 255, 220, 180, 140, 255]);
   });
 
+  it("treats fully transparent RGB data as black", () => {
+    const result = adjustImageData(new Uint8ClampedArray([255, 255, 255, 0]), 1, 1, DEFAULT_IMAGE_ADJUSTMENTS);
+
+    expect(result.luminance[0]).toBe(0);
+    expect(Array.from(result.data.slice(0, 3))).toEqual([0, 0, 0]);
+  });
+
+  it("sharpens local contrast independently from optional blur", () => {
+    const source = new Uint8ClampedArray([
+      0, 0, 0, 255,
+      128, 128, 128, 255,
+      255, 255, 255, 255,
+    ]);
+    const result = adjustImageData(source, 3, 1, { ...DEFAULT_IMAGE_ADJUSTMENTS, sharpness: 100 });
+
+    expect(result.luminance[0]).toBeLessThan(0.01);
+    expect(result.luminance[2]).toBeGreaterThan(0.99);
+  });
+
   it("creates stable normalized edge fields and thresholds tone composition", () => {
     const luminance: ToneField = { width: 3, height: 3, values: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]) };
     const details = sobelEdgeDetails(luminance);

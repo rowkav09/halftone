@@ -264,12 +264,20 @@ function DitherCompareModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image, options]);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md" role="dialog" aria-modal="true" aria-labelledby="dither-compare-title">
       <div className="flex max-h-[90vh] w-full max-w-[1200px] flex-col rounded-md border border-white/10 bg-zinc-950 p-6 shadow-2xl">
         <div className="flex items-center justify-between border-b border-white/10 pb-4">
           <div>
-            <h3 className="text-lg font-semibold text-white">Dither Comparison</h3>
+            <h3 id="dither-compare-title" className="text-lg font-semibold text-white">Dither Comparison</h3>
             <p className="text-xs text-slate-400">See how different algorithms behave under your current settings.</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-sm border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white hover:bg-white/10">
@@ -298,7 +306,10 @@ export default function Home() {
   const fileUrlRef = useRef<string | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const comparisonOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const loadRequestRef = useRef(0);
+  const renderRequestRef = useRef(0);
   const urlHydratedRef = useRef(false);
 
   const [mode, setMode] = useState<"image" | "text">("image");
@@ -354,21 +365,29 @@ export default function Home() {
 
   const loadFile = useCallback((file: File) => {
     if (!file.type.startsWith("image/")) { setStatus("Please choose an image file."); return; }
+    const request = loadRequestRef.current + 1;
+    loadRequestRef.current = request;
     if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
     const url = URL.createObjectURL(file);
     fileUrlRef.current = url;
     setImageUrl(url);
     setMode("image");
     setImageReady(false);
+    setGeneratedArt(null);
     const image = new Image();
     image.decoding = "async";
     image.onload = () => {
+      if (request !== loadRequestRef.current) return;
       imageRef.current = image;
       setLoadedImage(image);
       setImageReady(true);
       setStatus("Image loaded. Tune the live renderer below.");
     };
-    image.onerror = () => { setStatus("That file could not be loaded as an image."); setImageReady(false); };
+    image.onerror = () => {
+      if (request !== loadRequestRef.current) return;
+      setStatus("That file could not be loaded as an image.");
+      setImageReady(false);
+    };
     image.src = url;
   }, []);
 
@@ -379,31 +398,74 @@ export default function Home() {
     const metrics = canvasMetrics(generated);
     canvas.width = metrics.width;
     canvas.height = metrics.height;
-    context.fillStyle = generated.background;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    drawBackgroundOnCanvas(context, canvas.width, canvas.height, generated.backgroundConfig, generated.background);
     context.font = `${metrics.fontSize}px var(--font-mono), ui-monospace, monospace`;
     context.textBaseline = "top";
     generated.lines.forEach((line, row) => Array.from(line).forEach((glyph, column) => {
       context.fillStyle = generated.colors[row]?.[column] ?? generated.foreground;
       context.fillText(glyph, metrics.padding + column * metrics.glyphAdvance, metrics.padding + row * metrics.lineHeight);
     }));
-  }, []);
+
+    const comparisonOverlayCanvas = comparisonOverlayCanvasRef.current;
+    const comparisonOverlayContext = comparisonOverlayCanvas?.getContext("2d");
+    const image = imageRef.current;
+    if (!comparisonOverlayCanvas || !comparisonOverlayContext || !image || mode !== "image") return;
+    comparisonOverlayCanvas.width = metrics.width;
+    comparisonOverlayCanvas.height = metrics.height;
+    comparisonOverlayContext.clearRect(0, 0, metrics.width, metrics.height);
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) return;
+    const sourceAspect = sourceWidth / sourceHeight;
+    const destinationAspect = metrics.width / metrics.height;
+    const fitMode = adjustments.fitMode;
+    let drawWidth = metrics.width;
+    let drawHeight = metrics.height;
+    let drawX = 0;
+    let drawY = 0;
+    if (fitMode === "contain") {
+      if (sourceAspect > destinationAspect) {
+        drawHeight = metrics.width / sourceAspect;
+        drawY = (metrics.height - drawHeight) / 2;
+      } else {
+        drawWidth = metrics.height * sourceAspect;
+        drawX = (metrics.width - drawWidth) / 2;
+      }
+    } else if (fitMode === "cover") {
+      if (sourceAspect > destinationAspect) {
+        drawWidth = metrics.height * sourceAspect;
+        drawX = -(drawWidth - metrics.width) * (adjustments.cropX / 100);
+      } else {
+        drawHeight = metrics.width / sourceAspect;
+        drawY = -(drawHeight - metrics.height) * (adjustments.cropY / 100);
+      }
+    }
+    comparisonOverlayContext.drawImage(image, drawX, drawY, drawWidth, drawHeight);
+  }, [adjustments.cropX, adjustments.cropY, adjustments.fitMode, mode]);
 
   const renderArt = useCallback(async () => {
     if (mode === "image" && !imageRef.current) return;
     if (!activeTextStyle) return;
+    const request = renderRequestRef.current + 1;
+    renderRequestRef.current = request;
     setIsRendering(true);
     try {
-      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation };
+      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, backgroundConfig, colorTreatmentConfig };
       const generated = mode === "text" ? generateCustomTextArt(textValue, activeTextStyle) : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
+      if (request !== renderRequestRef.current) return;
       setGeneratedArt(generated);
       if (mode === "image") drawGeneratedArt(generated);
       setStatus(`Rendered ${generated.columns} × ${generated.rows} characters.`);
       void incrementUsage();
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
-    } finally { setIsRendering(false); }
-  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
+      if (request === renderRequestRef.current) {
+        setGeneratedArt(null);
+        setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
+      }
+    } finally {
+      if (request === renderRequestRef.current) setIsRendering(false);
+    }
+  }, [activeTextStyle, adjustments, backgroundConfig, backgroundSeparation, characterSet, colorCount, colorMode, colorTreatmentConfig, customGlyphs, ditherAlgorithm, drawGeneratedArt, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
 
   const updateAdjustment = useCallback((key: keyof ImageAdjustments, value: number) => setAdjustments((current) => ({ ...current, [key]: value })), []);
 
@@ -418,6 +480,8 @@ export default function Home() {
     setRenderMode("density");
     setAdjustments(DEFAULT_IMAGE_ADJUSTMENTS);
     setBackgroundSeparation(DEFAULT_BACKGROUND_SEPARATION);
+    setBackgroundConfig(DEFAULT_BACKGROUND_CONFIG);
+    setColorTreatmentConfig(DEFAULT_COLOR_TREATMENT_CONFIG);
     setStatus("Image settings reset to the accuracy-first default.");
   }, []);
 
@@ -623,7 +687,7 @@ export default function Home() {
       <div className="grid flex-1 gap-4 xl:grid-cols-[292px_minmax(0,1fr)_292px]">
         <section className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3 backdrop-blur-sm">
           <div className={`rounded-md border border-dashed p-3 transition ${isDragging ? "border-emerald-300 bg-emerald-300/10" : "border-white/15 bg-black/40"}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); const file = event.dataTransfer.files.item(0); if (file) loadFile(file); }}>
-            <input ref={inputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) loadFile(file); }} />
+            <input ref={inputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (file) loadFile(file); }} />
             <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Upload image</p><p className="mt-1 text-xs text-slate-500">Drop, browse, or paste.</p></div><button type="button" onClick={() => inputRef.current?.click()} className="rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:-translate-y-px hover:bg-white/10 active:translate-y-0">Browse</button></div>
           </div>
 
@@ -644,16 +708,16 @@ export default function Home() {
 
         <section className="flex min-h-[72vh] flex-col rounded-md border border-white/10 bg-black/60 p-3">
           <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>{mode === "text" ? "ASCII output" : "Preview"}</span><span>{artLines.length ? `${previewColumns} × ${artLines.length}` : "waiting"}</span></div>
-          {mode === "text" ? <pre style={{ backgroundColor: textBackground ?? "transparent", lineHeight: figletColourSettings.lineHeight }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px]">{displayArt ? displayArt.lines.map((line, row) => <Fragment key={`${row}-${line}`}><ColouredFigletLine line={line} colors={displayArt.colors[row] ?? []} fallback={displayArt.foreground} row={row} />{row < displayArt.lines.length - 1 ? "\n" : null}</Fragment>) : "Type text to generate an ASCII banner."}</pre> : <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black p-2"><div className="relative w-full" style={{ aspectRatio: previewAspect }}><canvas ref={previewCanvasRef} className={artLines.length ? "absolute inset-0 h-full w-full" : "hidden"} />{showComparison && imageUrl && artLines.length ? <div className="absolute inset-y-0 left-0 overflow-hidden border-r border-emerald-200/70" style={{ width: `${comparisonPosition}%` }}>{/* Blob URLs are local, user-supplied images and intentionally bypass Next image optimisation. */}<img src={imageUrl} alt="Original image comparison" className="h-full w-full object-fill" /></div> : null}{!artLines.length ? <p className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div></div>}
-          {mode === "image" && artLines.length ? <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3"><button type="button" onClick={() => setShowComparison((current) => !current)} className={`rounded-sm border px-3 py-1.5 text-xs transition hover:bg-white/10 ${showComparison ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>{showComparison ? "Hide before" : "Compare before"}</button><button type="button" onClick={() => setShowDitherCompare(true)} className="rounded-sm border border-emerald-300/30 bg-emerald-300/5 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-300/10">Compare Dithers</button>{showComparison ? <label className="flex flex-1 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500"><span>Before</span><input aria-label="Before and after comparison position" type="range" min="0" max="100" value={comparisonPosition} onChange={(event) => setComparisonPosition(Number(event.target.value))} className="h-1.5 flex-1 accent-emerald-300" /><span>After</span></label> : null}</div> : null}
-          <p className="mt-2 text-xs text-slate-500">{status}</p>
+          {mode === "text" ? <pre style={{ backgroundColor: textBackground ?? "transparent", lineHeight: figletColourSettings.lineHeight }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px]">{displayArt ? displayArt.lines.map((line, row) => <Fragment key={`${row}-${line}`}><ColouredFigletLine line={line} colors={displayArt.colors[row] ?? []} fallback={displayArt.foreground} row={row} />{row < displayArt.lines.length - 1 ? "\n" : null}</Fragment>) : "Type text to generate an ASCII banner."}</pre> : <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black p-2"><div className="relative w-full" style={{ aspectRatio: previewAspect }}><canvas ref={previewCanvasRef} className={artLines.length ? "absolute inset-0 h-full w-full" : "hidden"} />{showComparison && artLines.length ? <div className="absolute inset-0" role="group" aria-label="Original and generated ASCII comparison" onPointerMove={(event) => { if (event.buttons !== 1) return; const bounds = event.currentTarget.getBoundingClientRect(); setComparisonPosition(Math.min(100, Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100))); }}><div className="absolute inset-y-0 left-0 overflow-hidden border-r-2 border-emerald-200 shadow-[2px_0_0_rgba(0,0,0,0.55)]" style={{ width: `${comparisonPosition}%` }}><canvas ref={comparisonOverlayCanvasRef} className="absolute inset-0 h-full w-full" /></div><div className="absolute inset-y-0 w-5 -translate-x-1/2 cursor-ew-resize touch-none" style={{ left: `${comparisonPosition}%` }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const bounds = event.currentTarget.parentElement?.getBoundingClientRect(); if (bounds) setComparisonPosition(Math.min(100, Math.max(0, ((event.clientX - bounds.left) / bounds.width) * 100))); }}><span className="absolute left-1/2 top-1/2 h-10 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-200 shadow-[0_0_0_2px_rgba(0,0,0,0.45)]" /></div></div> : null}{!artLines.length ? <p className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div></div>}
+          {mode === "image" && artLines.length ? <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3"><button type="button" onClick={() => setShowComparison((current) => !current)} className={`rounded-sm border px-3 py-1.5 text-xs transition hover:bg-white/10 ${showComparison ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>{showComparison ? "Hide before" : "Compare before"}</button><button type="button" onClick={() => setShowDitherCompare(true)} className="rounded-sm border border-emerald-300/30 bg-emerald-300/5 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-300/10">Compare Dithers</button>{showComparison ? <label className="flex flex-1 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500"><span>Before</span><input aria-label="Before and after comparison position" aria-valuetext={`${Math.round(comparisonPosition)}% original`} type="range" min="0" max="100" value={comparisonPosition} onChange={(event) => setComparisonPosition(Number(event.target.value))} className="h-1.5 flex-1 accent-emerald-300" /><span>After</span></label> : null}</div> : null}
+          <p className="mt-2 text-xs text-slate-500" aria-live="polite" aria-atomic="true">{status}</p>
         </section>
 
         <aside className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3">
           <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text wrapper<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><p className="text-xs text-slate-500">The wrapper affects text previews, copied text, and TXT exports.</p><div className="grid grid-cols-2 gap-2"><button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button><button type="button" disabled={!artLines.length} onClick={exportText} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">TXT</button>{mode === "image" ? <button type="button" disabled={!artLines.length} onClick={exportPng} className="rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:opacity-40">PNG</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.svg`, generateSvgExport(displayArt), "image/svg+xml;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">SVG</button><button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.html`, generateHtmlExport(displayArt, mode === "text" ? textHtmlOptions : undefined), "text/html;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">HTML</button>{mode === "text" ? <button type="button" disabled={!displayArt} onClick={() => void copyHtml()} className="rounded-sm border border-emerald-300/30 px-3 py-2 text-sm text-emerald-100 transition hover:bg-emerald-300/10 disabled:opacity-40">{htmlCopyState === "copied" ? "HTML copied" : htmlCopyState === "failed" ? "HTML failed" : "Copy HTML"}</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.ansi`, generateAnsiExport(displayArt), "text/plain;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">ANSI</button></div><p className="text-xs text-slate-500">HTML, SVG, and ANSI retain the displayed per-character colour.</p></div>
 
           {mode === "image" ? <>
-          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
+          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this renderer configuration link; uploaded images are not included" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy settings link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
 
           {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-2">Fit Mode<select value={adjustments.fitMode} onChange={(e) => updateAdjustment("fitMode", e.target.value as any)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/40"><option value="stretch">Stretch</option><option value="contain">Contain</option><option value="cover">Cover</option></select></label>{adjustments.fitMode === "cover" && ( <div className="space-y-2 mt-2"><RangeControl label="Crop X" value={adjustments.cropX} min={0} max={100} step={5} suffix="%" onChange={(value) => updateAdjustment("cropX", value)} /><RangeControl label="Crop Y" value={adjustments.cropY} min={0} max={100} step={5} suffix="%" onChange={(value) => updateAdjustment("cropY", value)} /></div> )}<RangeControl label="Character Aspect" value={adjustments.aspectRatio} min={0.2} max={1.5} step={0.05} onChange={(value) => updateAdjustment("aspectRatio", value)} format={(value) => value === 1.0 ? "Square (1.0)" : value === 0.6 ? "Standard (0.6)" : value.toFixed(2)} /><RangeControl label="Posterise Levels" value={adjustments.posteriseLevels} min={0} max={32} step={1} onChange={(value) => updateAdjustment("posteriseLevels", value)} format={(value) => value === 0 ? "Off (Auto)" : `${value} levels`} /><RangeControl label="Grain Amount" value={adjustments.grainAmount} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("grainAmount", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /></div> : null}
 

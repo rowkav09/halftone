@@ -61,19 +61,24 @@ export const adjustImageData = (
     green = clamp(gray + (green - gray) * saturation);
     blue = clamp(gray + (blue - gray) * saturation);
 
-    adjusted[offset] = Math.round(red * 255);
-    adjusted[offset + 1] = Math.round(green * 255);
-    adjusted[offset + 2] = Math.round(blue * 255);
+    const alpha = (source[offset + 3] ?? 255) / 255;
+    // Transparent PNG pixels can retain arbitrary RGB values. Composite them
+    // against black for tone and colour sampling so invisible pixels stay quiet.
+    adjusted[offset] = Math.round(red * 255 * alpha);
+    adjusted[offset + 1] = Math.round(green * 255 * alpha);
+    adjusted[offset + 2] = Math.round(blue * 255 * alpha);
     adjusted[offset + 3] = source[offset + 3] ?? 255;
     luminance[index] = luminanceFromRgb(adjusted[offset], adjusted[offset + 1], adjusted[offset + 2]);
   }
 
   const blurred = blurField(luminance, width, height, adjustments.blur);
-  const sharpenBase = adjustments.sharpness > 0 ? blurField(blurred, width, height, 1) : blurred;
+  const sharpenBase = adjustments.sharpness > 0 ? blurField(luminance, width, height, 1) : luminance;
   const tone = new Float32Array(luminance.length);
   const sharpness = adjustments.sharpness / 100;
   for (let index = 0; index < tone.length; index += 1) {
-    tone[index] = clamp(blurred[index] + (blurred[index] - sharpenBase[index]) * sharpness * 2);
+    const sharpened = clamp((luminance[index] ?? 0) + ((luminance[index] ?? 0) - (sharpenBase[index] ?? 0)) * sharpness * 2);
+    const softened = adjustments.blur > 0 ? blurred[index] ?? sharpened : sharpened;
+    tone[index] = clamp(softened);
   }
 
   return { data: adjusted, luminance: tone };

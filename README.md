@@ -17,10 +17,14 @@ Turn images into character art, or type a phrase to generate copy-ready FIGlet b
 ## Features
 
 - Image mode with ASCII, Braille, Blocks, Unicode, Binary, Matrix, Symbols, and custom glyph sets.
+- Fit, crop, aspect, brightness, contrast, gamma, saturation, threshold, grain, sharpness, blur, and dithering controls.
+- Curated image presets plus a dither comparison view for experimenting with output quality.
+- Original ↔ generated-art comparison with a draggable divider; the source is transformed to the exact rendered output dimensions.
 - Text mode with 38 curated FIGlet styles, including Graffiti, Cyberlarge, Fun Faces, Star Wars, and more.
 - Output formatting for plain ASCII, `//`, `/* */`, SQL, JavaDoc, Bash, SGML, Echo, Python, and Batch comments.
 - Palette-aware text output in Black & White, Green Terminal, Amber CRT, and Blue.
-- PNG and TXT export for image art; TXT export for text art.
+- PNG, SVG, HTML, ANSI, TXT export, clipboard copy, drag-and-drop, and pasted images.
+- Renderer settings links for sharing configurations. Uploaded images are intentionally not embedded in URLs.
 - A live generations badge backed by Upstash Redis.
 
 ## Operations
