@@ -5,7 +5,7 @@ import { applyToneCurve } from "@/lib/renderer/tone";
 import { applyGrain } from "@/lib/renderer/grain";
 import { clampAspectFactor, getSourceRegion, type CropPosition, type FitMode } from "@/lib/renderer/sampling";
 import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
-import { interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
+import { hexToRgb, interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
 import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
@@ -107,14 +107,13 @@ export const getCharactersForSet = (characterSet: CharacterSetId, customText: st
 
 const getPalette = (palette: PaletteId) => PALETTES.find((option) => option.id === palette) ?? PALETTES[0];
 
-const blendColors = (background: string, foreground: string, mix: number) => {
-  if (!isHexColour(background) || !isHexColour(foreground)) return foreground;
-  const from = [Number.parseInt(background.slice(1, 3), 16), Number.parseInt(background.slice(3, 5), 16), Number.parseInt(background.slice(5, 7), 16)] as const;
-  const to = [Number.parseInt(foreground.slice(1, 3), 16), Number.parseInt(foreground.slice(3, 5), 16), Number.parseInt(foreground.slice(5, 7), 16)] as const;
+const blendColors = (background: Rgb, foreground: string, mix: number) => {
+  if (!isHexColour(foreground)) return foreground;
+  const to = hexToRgb(foreground);
   return rgbToHex(
-    from[0] + (to[0] - from[0]) * mix,
-    from[1] + (to[1] - from[1]) * mix,
-    from[2] + (to[2] - from[2]) * mix,
+    background[0] + (to[0] - background[0]) * mix,
+    background[1] + (to[1] - background[1]) * mix,
+    background[2] + (to[2] - background[2]) * mix,
   );
 };
 
@@ -380,6 +379,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const imagePalette = getImagePalette(processed.data, options.colorCount);
   const resolveColour = createColourTreatmentResolver(treatment, imagePalette ?? []);
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
+  const separationColour = separation && isHexColour(separation.colour) ? hexToRgb(separation.colour) : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
   const foregroundLikelihood = separation ? createForegroundLikelihood(processed.data, processed.luminance, sampleWidth, sampleHeight) : null;
   const lines: string[] = [];
@@ -414,7 +414,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const readableSource = toReadableColor(displayRed, displayGreen, displayBlue, tone);
       const sourceLuminance = luminanceFromRgb(red, green, blue) / 255;
       const foregroundColour = resolveColour([displayRed, displayGreen, displayBlue], sourceLuminance, readableSource);
-      rowColors.push(separation ? blendColors(separation.colour, foregroundColour, foregroundMix) : foregroundColour);
+      rowColors.push(separation && separationColour ? blendColors(separationColour, foregroundColour, foregroundMix) : foregroundColour);
     }
     lines.push(line);
     colors.push(rowColors);

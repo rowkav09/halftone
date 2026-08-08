@@ -28,12 +28,14 @@ export const rgbToHex = (red: number, green: number, blue: number) => {
 };
 
 export const interpolateColour = (start: string, end: string, progress: number) => {
-  const from = hexToRgb(start);
-  const to = hexToRgb(end);
+  return interpolateRgb(hexToRgb(start), hexToRgb(end), progress);
+};
+
+export const interpolateRgb = (start: Rgb, end: Rgb, progress: number) => {
   const amount = Math.min(1, Math.max(0, progress));
   return rgbToHex(
-    from[0] + (to[0] - from[0]) * amount,
-    from[1] + (to[1] - from[1]) * amount,
-    from[2] + (to[2] - from[2]) * amount,
+    start[0] + (end[0] - start[0]) * amount,
+    start[1] + (end[1] - start[1]) * amount,
+    start[2] + (end[2] - start[2]) * amount,
   );
 };
