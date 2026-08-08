@@ -36,4 +36,27 @@ describe("art renderer", () => {
     expect(first.lines.every((line) => line.length === 24)).toBe(true);
     expect(first.colors.every((row) => row.length === 24)).toBe(true);
   });
+
+  it("preserves readable default colours while applying the colour count", () => {
+    const mock = installCanvasMock([
+      [12, 34, 56, 255],
+      [220, 80, 40, 255],
+      [40, 180, 220, 255],
+      [240, 220, 80, 255],
+    ]);
+    restore = mock.restore;
+    const defaults = {
+      ...options,
+      colorMode: "colour" as const,
+      colorCount: 2 as const,
+      palette: "bw" as const,
+      colourTreatment: undefined,
+    };
+    const limited = generateArtFromCanvas(mock.source, defaults);
+    const full = generateArtFromCanvas(mock.source, { ...defaults, colorCount: 8 });
+
+    expect(limited.colourTreatment).toEqual({ kind: "source" });
+    expect(limited.colors[0]?.[0]).toBe("#c7bcc2");
+    expect(limited.colors).not.toEqual(full.colors);
+  });
 });

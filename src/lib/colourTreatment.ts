@@ -1,4 +1,4 @@
-import { interpolateColour, safeColour, type Rgb, rgbToHex } from "@/lib/colour";
+import { interpolateColour, safeColour, squaredDistance, type Rgb, rgbToHex } from "@/lib/colour";
 import type { ColorCount } from "@/lib/art";
 
 export type ColourTreatment =
@@ -7,13 +7,6 @@ export type ColourTreatment =
   | { kind: "palette"; count: ColorCount }
   | { kind: "duotone"; shadowColour: string; highlightColour: string }
   | { kind: "gradient-map"; stops: string[] };
-
-const squaredDistance = (first: Rgb, second: Rgb) => {
-  const red = first[0] - second[0];
-  const green = first[1] - second[1];
-  const blue = first[2] - second[2];
-  return red * red + green * green + blue * blue;
-};
 
 const closestPaletteColour = (source: Rgb, colours: Rgb[]) => {
   if (!colours.length) return rgbToHex(source[0], source[1], source[2]);

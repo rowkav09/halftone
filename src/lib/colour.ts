@@ -2,6 +2,13 @@ export type Rgb = readonly [number, number, number];
 
 const HEX_COLOUR = /^#[\da-f]{6}$/iu;
 
+export const squaredDistance = (first: Rgb, second: Rgb) => {
+  const red = first[0] - second[0];
+  const green = first[1] - second[1];
+  const blue = first[2] - second[2];
+  return red * red + green * green + blue * blue;
+};
+
 export const isHexColour = (value: string | undefined): value is string => Boolean(value && HEX_COLOUR.test(value));
 
 export const safeColour = (value: string | undefined, fallback = "#e8edf2") => isHexColour(value) ? value : fallback;

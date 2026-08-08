@@ -8,10 +8,10 @@ type MockContext = {
   fillStyle: string;
   drawImage: () => void;
   fillText: () => void;
-  getImageData: () => ImageData;
+  getImageData: (x: number, y: number, width: number, height: number) => ImageData;
 };
 
-export const installCanvasMock = (pixel: Pixel = [32, 96, 160, 255]) => {
+export const installCanvasMock = (pixels: Pixel | Pixel[] = [32, 96, 160, 255]) => {
   const createCanvas = () => {
     const context: MockContext = {
       imageSmoothingEnabled: false,
@@ -21,7 +21,15 @@ export const installCanvasMock = (pixel: Pixel = [32, 96, 160, 255]) => {
       fillStyle: "#000000",
       drawImage: () => undefined,
       fillText: () => undefined,
-      getImageData: () => ({ data: new Uint8ClampedArray(pixel) } as ImageData),
+      getImageData: (_x, _y, width, height) => {
+        const sourcePixels = Array.isArray(pixels[0]) ? pixels as Pixel[] : [pixels as Pixel];
+        const data = new Uint8ClampedArray(width * height * 4);
+        for (let index = 0; index < width * height; index += 1) {
+          const pixel = sourcePixels[index % sourcePixels.length] ?? sourcePixels[0]!;
+          data.set(pixel, index * 4);
+        }
+        return { data } as ImageData;
+      },
     };
     return {
       width: 1,

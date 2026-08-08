@@ -3,7 +3,7 @@ import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByD
 import { adjustImageData, combineToneAndEdges, luminanceFromRgb, sobelEdgeDetails } from "@/lib/renderer/processing";
 import { applyToneCurve } from "@/lib/renderer/tone";
 import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
-import { interpolateColour, isHexColour, rgbToHex, type Rgb } from "@/lib/colour";
+import { interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
 import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
@@ -134,9 +134,7 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
     let candidate = samples[0] ?? [0, 0, 0];
     let greatestDistance = -1;
     for (const sample of samples) {
-      const nearest = Math.min(...centers.map((center) => (
-        (sample[0] - center[0]) ** 2 + (sample[1] - center[1]) ** 2 + (sample[2] - center[2]) ** 2
-      )));
+      const nearest = Math.min(...centers.map((center) => squaredDistance(sample, center)));
       if (nearest > greatestDistance) { greatestDistance = nearest; candidate = sample; }
     }
     centers.push(candidate);
@@ -148,7 +146,7 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
       let nearestIndex = 0;
       let nearestDistance = Infinity;
       centers.forEach((center, index) => {
-        const distance = (sample[0] - center[0]) ** 2 + (sample[1] - center[1]) ** 2 + (sample[2] - center[2]) ** 2;
+        const distance = squaredDistance(sample, center);
         if (distance < nearestDistance) { nearestDistance = distance; nearestIndex = index; }
       });
       const total = totals[nearestIndex];
@@ -166,8 +164,8 @@ const getClosestPaletteColor = (red: number, green: number, blue: number, palett
   if (!palette?.length) return [red, green, blue];
   const color: Rgb = [red, green, blue];
   return palette.reduce((closest, candidate) => {
-    const distance = (color[0] - candidate[0]) ** 2 + (color[1] - candidate[1]) ** 2 + (color[2] - candidate[2]) ** 2;
-    const closestDistance = (color[0] - closest[0]) ** 2 + (color[1] - closest[1]) ** 2 + (color[2] - closest[2]) ** 2;
+    const distance = squaredDistance(color, candidate);
+    const closestDistance = squaredDistance(color, closest);
     return distance < closestDistance ? candidate : closest;
   });
 };
@@ -350,9 +348,9 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
   const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, Math.max(1, genericGlyphs.length - 1), isBraille);
   const treatment: ColourTreatment = options.colourTreatment ?? (options.colorMode === "colour"
-    ? options.colorCount > 0 ? { kind: "palette", count: options.colorCount } : { kind: "source" }
+    ? { kind: "source" }
     : { kind: "monochrome", colour: palette.foreground });
-  const imagePalette = getImagePalette(processed.data, treatment.kind === "palette" ? treatment.count : 0);
+  const imagePalette = getImagePalette(processed.data, options.colorCount);
   const resolveColour = createColourTreatmentResolver(treatment, imagePalette ?? []);
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
