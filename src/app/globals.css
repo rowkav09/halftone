@@ -38,6 +38,11 @@ button:not(:disabled):active {
   transform: translateY(0);
 }
 
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid rgba(169, 255, 196, 0.9);
+  outline-offset: 2px;
+}
+
 ::selection {
   background: rgba(118, 255, 148, 0.25);
 }
@@ -89,5 +94,14 @@ button:not(:disabled):active {
   .ascii-intro::after,
   .ascii-intro-signal {
     animation: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
