@@ -7,6 +7,7 @@ describe("image presets", () => {
   it("contains complete, valid option bundles", () => {
     expect(IMAGE_PRESETS.length).toBeGreaterThanOrEqual(6);
     expect(IMAGE_PRESETS.length).toBeLessThanOrEqual(8);
+    expect(new Set(IMAGE_PRESETS.map((preset) => preset.id)).size).toBe(IMAGE_PRESETS.length);
     for (const preset of IMAGE_PRESETS) {
       expect(isValidImagePreset(preset)).toBe(true);
       expect(preset.characterSet === "custom" || preset.characterSet in CHARACTER_SETS).toBe(true);
