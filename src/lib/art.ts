@@ -2,6 +2,8 @@ import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
 import { adjustImageData, combineToneAndEdges, luminanceFromRgb, sobelEdgeDetails } from "@/lib/renderer/processing";
 import { applyToneCurve } from "@/lib/renderer/tone";
+import { applyGrain } from "@/lib/renderer/grain";
+import { clampAspectFactor, getSourceRegion, type CropPosition, type FitMode } from "@/lib/renderer/sampling";
 import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
 import { interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
 import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
@@ -60,6 +62,9 @@ export const DEFAULT_BACKGROUND_SEPARATION: BackgroundSeparationOptions = {
 
 export type ArtOptions = {
   columns: number;
+  aspectFactor?: number;
+  fitMode?: FitMode;
+  cropPosition?: CropPosition;
   characterSet: CharacterSetId;
   customText: string;
   invert: boolean;
@@ -267,7 +272,9 @@ const renderToneField = (luminance: Float32Array, width: number, height: number,
   const levels = isBraille ? 1 : adjustments.toneLevels >= 2
     ? clamp(Math.round(adjustments.toneLevels), 2, 16)
     : Math.max(1, automaticLevels);
-  return { tone: applyDither(applyToneCurve(combined), algorithm, adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
+  const curved = applyToneCurve(combined);
+  const grained = applyGrain(curved.values, adjustments.grain, adjustments.grainSeed);
+  return { tone: applyDither({ values: grained, width, height }, algorithm, adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
 };
 
 const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
@@ -325,9 +332,9 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const palette = getPalette(options.palette);
   const isBraille = options.characterSet === "braille";
   const columns = clamp(options.columns, 24, 240);
-  // Canvas glyphs are approximately 0.6 as wide as they are tall, so rows
-  // must be derived from that physical cell ratio instead of source pixels.
-  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * 0.6));
+  // The default 0.6 ratio is the renderer's historical effective cell aspect.
+  const aspectFactor = clampAspectFactor(options.aspectFactor ?? 0.6);
+  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectFactor));
   const sampleWidth = isBraille ? columns * 2 : columns;
   const sampleHeight = isBraille ? rows * 4 : rows;
   const oversample = 2;
@@ -338,7 +345,26 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   if (!sampleContext) throw new Error("Canvas 2D context is unavailable.");
   sampleContext.imageSmoothingEnabled = true;
   sampleContext.imageSmoothingQuality = "high";
-  sampleContext.drawImage(sourceCanvas, 0, 0, sourceSampleWidth, sourceSampleHeight);
+  const sourceRegion = getSourceRegion(
+    sourceCanvas.width,
+    sourceCanvas.height,
+    sourceSampleWidth,
+    sourceSampleHeight,
+    options.fitMode ?? "stretch",
+    options.cropPosition ?? "center",
+  );
+  sampleContext.clearRect(0, 0, sourceSampleWidth, sourceSampleHeight);
+  sampleContext.drawImage(
+    sourceCanvas,
+    sourceRegion.sourceX,
+    sourceRegion.sourceY,
+    sourceRegion.sourceWidth,
+    sourceRegion.sourceHeight,
+    sourceRegion.destinationX,
+    sourceRegion.destinationY,
+    sourceRegion.destinationWidth,
+    sourceRegion.destinationHeight,
+  );
 
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const sampled = sampleContext.getImageData(0, 0, sourceSampleWidth, sourceSampleHeight).data;

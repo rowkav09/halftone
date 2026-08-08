@@ -6,7 +6,8 @@ type MockContext = {
   font: string;
   textBaseline: CanvasTextBaseline;
   fillStyle: string;
-  drawImage: () => void;
+  drawImage: (...args: unknown[]) => void;
+  clearRect: () => void;
   fillText: () => void;
   getImageData: (x: number, y: number, width: number, height: number) => ImageData;
 };
@@ -20,6 +21,7 @@ export const installCanvasMock = (pixels: Pixel | Pixel[] = [32, 96, 160, 255]) 
       textBaseline: "alphabetic",
       fillStyle: "#000000",
       drawImage: () => undefined,
+      clearRect: () => undefined,
       fillText: () => undefined,
       getImageData: (_x, _y, width, height) => {
         const sourcePixels = Array.isArray(pixels[0]) ? pixels as Pixel[] : [pixels as Pixel];

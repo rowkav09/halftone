@@ -33,6 +33,8 @@ export type ImageAdjustments = {
   preBlur: number;
   sharpness: number;
   blur: number;
+  grain: number;
+  grainSeed: number;
 };
 
 export const DEFAULT_IMAGE_ADJUSTMENTS: ImageAdjustments = {
@@ -46,6 +48,8 @@ export const DEFAULT_IMAGE_ADJUSTMENTS: ImageAdjustments = {
   preBlur: 0.25,
   sharpness: 0,
   blur: 0,
+  grain: 0,
+  grainSeed: 0,
 };
 
 export type ToneField = {

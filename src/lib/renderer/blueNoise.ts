@@ -3,8 +3,8 @@ const DEFAULT_SIGMA = 1.7;
 
 type Random = () => number;
 
-const createRandom = (seed: number): Random => {
-  let state = seed >>> 0;
+export const createDeterministicRandom = (seed: number): Random => {
+  let state = (seed >>> 0) || 0x9e3779b9;
   return () => {
     state ^= state << 13;
     state ^= state >>> 17;
@@ -66,7 +66,7 @@ const findExtreme = (pattern: Uint8Array, energy: Float64Array, occupied: boolea
 /** Generates a deterministic Ulichney-style void-and-cluster rank tile. */
 export const generateBlueNoiseRanks = (size = DEFAULT_SIZE, sigma = DEFAULT_SIGMA) => {
   const count = size * size;
-  const random = createRandom(0x6d2b79f5);
+  const random = createDeterministicRandom(0x6d2b79f5);
   const pattern = new Uint8Array(count);
   for (let index = 0; index < count; index += 1) {
     pattern[index] = random() < 0.5 ? 1 : 0;
