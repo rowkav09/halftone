@@ -14,6 +14,8 @@ export type ImageAdjustments = {
   /** A value of 0 leaves continuous tones intact; values above it create a hard cut-off. */
   threshold: number;
   ditherStrength: number;
+  /** Quantisation levels; zero selects an algorithm-dependent automatic value. */
+  toneLevels: number;
   /** Gentle source-space filtering applied before area downsampling. */
   preBlur: number;
   sharpness: number;
@@ -27,6 +29,7 @@ export const DEFAULT_IMAGE_ADJUSTMENTS: ImageAdjustments = {
   saturation: 1,
   threshold: 0,
   ditherStrength: 1,
+  toneLevels: 0,
   preBlur: 0.25,
   sharpness: 0,
   blur: 0,

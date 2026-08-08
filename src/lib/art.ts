@@ -1,6 +1,7 @@
 import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
 import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { applyToneCurve } from "@/lib/renderer/tone";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
@@ -259,7 +260,7 @@ const averageCellColour = (data: Uint8ClampedArray, width: number, height: numbe
   return [red / Math.max(1, count), green / Math.max(1, count), blue / Math.max(1, count)] as Rgb;
 };
 
-const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, levels: number) => {
+const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, glyphCount: number, isBraille: boolean) => {
   const base: ToneField = { values: luminance, width, height };
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const mode = options.renderMode ?? "density";
@@ -267,7 +268,12 @@ const renderToneField = (luminance: Float32Array, width: number, height: number,
   const edgeDetails = mode === "density" ? null : sobelEdgeDetails(base);
   const edges = edgeDetails?.edge ?? { values: new Float32Array(base.values.length), width, height };
   const combined = combineToneAndEdges(base, edges, options.invert, mode, adjustments.threshold);
-  return { tone: applyDither(combined, options.ditherAlgorithm ?? "none", adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
+  const algorithm = options.ditherAlgorithm ?? "none";
+  const automaticLevels = algorithm === "none" ? glyphCount - 1 : Math.min(glyphCount - 1, 8);
+  const levels = isBraille ? 1 : adjustments.toneLevels >= 2
+    ? clamp(Math.round(adjustments.toneLevels), 2, 16)
+    : Math.max(1, automaticLevels);
+  return { tone: applyDither(applyToneCurve(combined), algorithm, adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
 };
 
 const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
@@ -347,7 +353,7 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const processed = adjustImageData(downsampled, sampleWidth, sampleHeight, adjustments);
   const rawCharacters = getCharactersForSet(options.characterSet, options.customText);
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
-  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, isBraille ? 1 : Math.max(1, genericGlyphs.length - 1));
+  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, Math.max(1, genericGlyphs.length - 1), isBraille);
   const imagePalette = options.colorMode === "colour" ? getImagePalette(processed.data, options.colorCount) : null;
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
