@@ -5,14 +5,22 @@ type MockContext = {
   imageSmoothingQuality: ImageSmoothingQuality;
   font: string;
   textBaseline: CanvasTextBaseline;
-  fillStyle: string;
+  fillStyle: string | CanvasGradient | CanvasPattern;
   drawImage: () => void;
   fillText: () => void;
   getImageData: () => ImageData;
+  fillRect: () => void;
+  clearRect: () => void;
+  createLinearGradient: () => CanvasGradient;
+  createRadialGradient: () => CanvasGradient;
 };
 
 export const installCanvasMock = (pixel: Pixel = [32, 96, 160, 255]) => {
   const createCanvas = () => {
+    const dummyGrad = {
+      addColorStop: () => undefined,
+    } as unknown as CanvasGradient;
+
     const context: MockContext = {
       imageSmoothingEnabled: false,
       imageSmoothingQuality: "low",
@@ -22,6 +30,10 @@ export const installCanvasMock = (pixel: Pixel = [32, 96, 160, 255]) => {
       drawImage: () => undefined,
       fillText: () => undefined,
       getImageData: () => ({ data: new Uint8ClampedArray(pixel) } as ImageData),
+      fillRect: () => undefined,
+      clearRect: () => undefined,
+      createLinearGradient: () => dummyGrad,
+      createRadialGradient: () => dummyGrad,
     };
     return {
       width: 1,
