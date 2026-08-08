@@ -1,14 +1,20 @@
 import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
-import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { adjustImageData, combineToneAndEdges, luminanceFromRgb, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { applyToneCurve } from "@/lib/renderer/tone";
+import { applyGrain } from "@/lib/renderer/grain";
+import { clampAspectFactor, getSourceRegion, type CropPosition, type FitMode } from "@/lib/renderer/sampling";
+import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
+import { hexToRgb, interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
+import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
+  DITHER_METADATA,
   RENDER_MODES,
   type DitherAlgorithm,
   type ImageAdjustments,
   type RenderMode,
-  type Rgb,
   type ToneField,
 } from "@/lib/renderer/types";
 
@@ -56,6 +62,9 @@ export const DEFAULT_BACKGROUND_SEPARATION: BackgroundSeparationOptions = {
 
 export type ArtOptions = {
   columns: number;
+  aspectFactor?: number;
+  fitMode?: FitMode;
+  cropPosition?: CropPosition;
   characterSet: CharacterSetId;
   customText: string;
   invert: boolean;
@@ -66,6 +75,8 @@ export type ArtOptions = {
   renderMode?: RenderMode;
   adjustments?: Partial<ImageAdjustments>;
   backgroundSeparation?: BackgroundSeparationOptions;
+  background?: Background;
+  colourTreatment?: ColourTreatment;
 };
 
 export type GeneratedArt = {
@@ -74,10 +85,12 @@ export type GeneratedArt = {
   columns: number;
   rows: number;
   foreground: string;
-  background: string;
+  background: Background;
+  backgroundColour: string;
+  colourTreatment: ColourTreatment;
 };
 
-export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, RENDER_MODES };
+export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, DITHER_METADATA, RENDER_MODES };
 export type { DitherAlgorithm, ImageAdjustments, RenderMode };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -94,38 +107,20 @@ export const getCharactersForSet = (characterSet: CharacterSetId, customText: st
 
 const getPalette = (palette: PaletteId) => PALETTES.find((option) => option.id === palette) ?? PALETTES[0];
 
-const toHexColor = (red: number, green: number, blue: number) => {
-  const componentToHex = (component: number) => Math.round(clamp(component, 0, 255)).toString(16).padStart(2, "0");
-  return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
-};
-
-const fromHexColor = (color: string): Rgb | null => {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/iu.exec(color);
-  return match ? [Number.parseInt(match[1] ?? "00", 16), Number.parseInt(match[2] ?? "00", 16), Number.parseInt(match[3] ?? "00", 16)] : null;
-};
-
-const blendColors = (background: string, foreground: string, mix: number) => {
-  const from = fromHexColor(background);
-  const to = fromHexColor(foreground);
-  if (!from || !to) return foreground;
-  return toHexColor(
-    from[0] + (to[0] - from[0]) * mix,
-    from[1] + (to[1] - from[1]) * mix,
-    from[2] + (to[2] - from[2]) * mix,
+const blendColors = (background: Rgb, foreground: string, mix: number) => {
+  if (!isHexColour(foreground)) return foreground;
+  const to = hexToRgb(foreground);
+  return rgbToHex(
+    background[0] + (to[0] - background[0]) * mix,
+    background[1] + (to[1] - background[1]) * mix,
+    background[2] + (to[2] - background[2]) * mix,
   );
 };
 
 // Dark source pixels still need enough light to be legible on the black canvas.
 const toReadableColor = (red: number, green: number, blue: number, tone: number) => {
   const lift = 0.32 + 0.5 * clamp(tone, 0, 1);
-  return toHexColor(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
-};
-
-const squaredDistance = (first: Rgb, second: Rgb) => {
-  const red = first[0] - second[0];
-  const green = first[1] - second[1];
-  const blue = first[2] - second[2];
-  return red * red + green * green + blue * blue;
+  return rgbToHex(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
 };
 
 const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rgb[] | null => {
@@ -173,7 +168,11 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
 const getClosestPaletteColor = (red: number, green: number, blue: number, palette: Rgb[] | null): Rgb => {
   if (!palette?.length) return [red, green, blue];
   const color: Rgb = [red, green, blue];
-  return palette.reduce((closest, candidate) => squaredDistance(color, candidate) < squaredDistance(color, closest) ? candidate : closest);
+  return palette.reduce((closest, candidate) => {
+    const distance = squaredDistance(color, candidate);
+    const closestDistance = squaredDistance(color, closest);
+    return distance < closestDistance ? candidate : closest;
+  });
 };
 
 const createCanvas = (width: number, height: number) => {
@@ -259,7 +258,7 @@ const averageCellColour = (data: Uint8ClampedArray, width: number, height: numbe
   return [red / Math.max(1, count), green / Math.max(1, count), blue / Math.max(1, count)] as Rgb;
 };
 
-const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, levels: number) => {
+const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, glyphCount: number, isBraille: boolean) => {
   const base: ToneField = { values: luminance, width, height };
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const mode = options.renderMode ?? "density";
@@ -267,7 +266,14 @@ const renderToneField = (luminance: Float32Array, width: number, height: number,
   const edgeDetails = mode === "density" ? null : sobelEdgeDetails(base);
   const edges = edgeDetails?.edge ?? { values: new Float32Array(base.values.length), width, height };
   const combined = combineToneAndEdges(base, edges, options.invert, mode, adjustments.threshold);
-  return { tone: applyDither(combined, options.ditherAlgorithm ?? "none", adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
+  const algorithm = options.ditherAlgorithm ?? "none";
+  const automaticLevels = algorithm === "none" ? glyphCount - 1 : Math.min(glyphCount - 1, 8);
+  const levels = isBraille ? 1 : adjustments.toneLevels >= 2
+    ? clamp(Math.round(adjustments.toneLevels), 2, 16)
+    : Math.max(1, automaticLevels);
+  const curved = applyToneCurve(combined);
+  const grained = applyGrain(curved.values, adjustments.grain, adjustments.grainSeed);
+  return { tone: applyDither({ values: grained, width, height }, algorithm, adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
 };
 
 const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
@@ -325,9 +331,9 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const palette = getPalette(options.palette);
   const isBraille = options.characterSet === "braille";
   const columns = clamp(options.columns, 24, 240);
-  // Canvas glyphs are approximately 0.6 as wide as they are tall, so rows
-  // must be derived from that physical cell ratio instead of source pixels.
-  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * 0.6));
+  // The default 0.6 ratio is the renderer's historical effective cell aspect.
+  const aspectFactor = clampAspectFactor(options.aspectFactor ?? 0.6);
+  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectFactor));
   const sampleWidth = isBraille ? columns * 2 : columns;
   const sampleHeight = isBraille ? rows * 4 : rows;
   const oversample = 2;
@@ -338,7 +344,26 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   if (!sampleContext) throw new Error("Canvas 2D context is unavailable.");
   sampleContext.imageSmoothingEnabled = true;
   sampleContext.imageSmoothingQuality = "high";
-  sampleContext.drawImage(sourceCanvas, 0, 0, sourceSampleWidth, sourceSampleHeight);
+  const sourceRegion = getSourceRegion(
+    sourceCanvas.width,
+    sourceCanvas.height,
+    sourceSampleWidth,
+    sourceSampleHeight,
+    options.fitMode ?? "stretch",
+    options.cropPosition ?? "center",
+  );
+  sampleContext.clearRect(0, 0, sourceSampleWidth, sourceSampleHeight);
+  sampleContext.drawImage(
+    sourceCanvas,
+    sourceRegion.sourceX,
+    sourceRegion.sourceY,
+    sourceRegion.sourceWidth,
+    sourceRegion.sourceHeight,
+    sourceRegion.destinationX,
+    sourceRegion.destinationY,
+    sourceRegion.destinationWidth,
+    sourceRegion.destinationHeight,
+  );
 
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const sampled = sampleContext.getImageData(0, 0, sourceSampleWidth, sourceSampleHeight).data;
@@ -347,9 +372,14 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const processed = adjustImageData(downsampled, sampleWidth, sampleHeight, adjustments);
   const rawCharacters = getCharactersForSet(options.characterSet, options.customText);
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
-  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, isBraille ? 1 : Math.max(1, genericGlyphs.length - 1));
-  const imagePalette = options.colorMode === "colour" ? getImagePalette(processed.data, options.colorCount) : null;
+  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, Math.max(1, genericGlyphs.length - 1), isBraille);
+  const treatment: ColourTreatment = options.colourTreatment ?? (options.colorMode === "colour"
+    ? { kind: "source" }
+    : { kind: "monochrome", colour: palette.foreground });
+  const imagePalette = getImagePalette(processed.data, options.colorCount);
+  const resolveColour = createColourTreatmentResolver(treatment, imagePalette ?? []);
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
+  const separationColour = separation && isHexColour(separation.colour) ? hexToRgb(separation.colour) : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
   const foregroundLikelihood = separation ? createForegroundLikelihood(processed.data, processed.luminance, sampleWidth, sampleHeight) : null;
   const lines: string[] = [];
@@ -381,13 +411,16 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
       const [red, green, blue] = averageCellColour(processed.data, sampleWidth, sampleHeight, column, row, horizontalSample, verticalSample);
       const [displayRed, displayGreen, displayBlue] = getClosestPaletteColor(red, green, blue, imagePalette);
       line += glyph;
-      const foregroundColour = options.colorMode === "colour" ? toReadableColor(displayRed, displayGreen, displayBlue, tone) : palette.foreground;
-      rowColors.push(separation ? blendColors(separation.colour, foregroundColour, foregroundMix) : foregroundColour);
+      const readableSource = toReadableColor(displayRed, displayGreen, displayBlue, tone);
+      const sourceLuminance = luminanceFromRgb(red, green, blue) / 255;
+      const foregroundColour = resolveColour([displayRed, displayGreen, displayBlue], sourceLuminance, readableSource);
+      rowColors.push(separation && separationColour ? blendColors(separationColour, foregroundColour, foregroundMix) : foregroundColour);
     }
     lines.push(line);
     colors.push(rowColors);
   }
-  return { lines, colors, columns, rows, foreground: palette.foreground, background: palette.background };
+  const background = options.background ?? solidBackground(palette.background);
+  return { lines, colors, columns, rows, foreground: palette.foreground, background, backgroundColour: backgroundRepresentativeColour(background, palette.background), colourTreatment: treatment };
 };
 
 const BRAILLE_CELL_DENSITY = (field: ToneField, cellX: number, cellY: number) => {

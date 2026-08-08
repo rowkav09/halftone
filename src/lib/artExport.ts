@@ -1,15 +1,8 @@
 import type { GeneratedArt } from "@/lib/art";
+import { cssBackground, svgBackground } from "@/lib/background";
+import { hexToRgb, safeColour } from "@/lib/colour";
 
 const escapeMarkup = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-const isHexColour = (value: string | undefined) => Boolean(value && /^#[\da-f]{6}$/i.test(value));
-const safeColour = (value: string | undefined, fallback: string) => isHexColour(value) ? value as string : fallback;
-
-const hexToRgb = (value: string) => {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(value);
-  if (!match) return [232, 237, 242] as const;
-  return [Number.parseInt(match[1] ?? "e8", 16), Number.parseInt(match[2] ?? "ed", 16), Number.parseInt(match[3] ?? "f2", 16)] as const;
-};
-
 const colouredRuns = (line: string, colors: string[], fallback: string) => {
   const runs: Array<{ text: string; color: string }> = [];
   Array.from(line).forEach((glyph, index) => {
@@ -56,7 +49,8 @@ export type HtmlExportOptions = {
 export const generateHtmlExport = (art: GeneratedArt, options: HtmlExportOptions = {}) => {
   const fallback = safeColour(art.foreground, "#e8edf2");
   const rows = art.lines.map((line, row) => colouredHtmlLine(line, art.colors[row] ?? [], fallback)).join("\n");
-  const background = options.background === null ? "" : `background:${safeColour(options.background ?? art.background, "#000000")};`;
+  const backgroundValue = options.background === null ? undefined : options.background ?? cssBackground(art.background);
+  const background = backgroundValue ? `background:${options.background ? safeColour(backgroundValue, "#000000") : backgroundValue};` : "";
   const lineHeight = Math.min(3, Math.max(0.5, options.lineHeight ?? 1.25));
   const padding = Math.max(0, options.padding ?? 24);
   return `<pre style="margin:0;${background}color:${fallback};padding:${padding}px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;line-height:${lineHeight};white-space:pre;">${rows}</pre>`;
@@ -77,7 +71,8 @@ export const generateSvgExport = (art: GeneratedArt) => {
       return `<text x="${padding + previousLength * glyphWidth}" y="${y}" fill="${run.color}">${escapeMarkup(run.text)}</text>`;
     }).join("");
   }).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="${art.background}"/><g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${fontSize}" xml:space="preserve">${text}</g></svg>`;
+  const background = svgBackground(art.background, width, height);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${background.defs}${background.rect}<g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${fontSize}" xml:space="preserve">${text}</g></svg>`;
 };
 
 /** Proper 24-bit ANSI foreground colour escapes, reset at each line ending. */

@@ -8,7 +8,9 @@ const art: GeneratedArt = {
   columns: 2,
   rows: 2,
   foreground: "#ffffff",
-  background: "#000000",
+  background: { kind: "solid", colour: "#000000" },
+  backgroundColour: "#000000",
+  colourTreatment: { kind: "source" },
 };
 
 describe("figlet text colours", () => {

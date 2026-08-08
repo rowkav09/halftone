@@ -187,7 +187,9 @@ export const generateFigletArt = (text: string, font: string, format: TextOutput
     columns: Math.max(...lines.map((line) => line.length), 0),
     rows: lines.length,
     foreground: "#c8ffbf",
-    background: "#000000",
+    background: { kind: "solid", colour: "#000000" },
+    backgroundColour: "#000000",
+    colourTreatment: { kind: "source" },
   };
   return formatGeneratedTextOutput(art, format);
 };
