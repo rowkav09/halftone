@@ -1,0 +1,13 @@
+
+> halftone@0.1.0 dev
+> next dev
+
+▲ Next.js 16.3.0 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.2:3000
+✓ Ready in 551ms
+✓ Running next.config.mjs took 27ms
+
+ GET / 200 in 3.2s (next.js: 2.8s, application-code: 378ms)
+ GET /api/uses 200 in 554ms (next.js: 515ms, application-code: 39ms)
+ GET /api/uses 200 in 577ms (next.js: 572ms, application-code: 5ms)

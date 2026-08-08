@@ -23,7 +23,16 @@ import {
   type RenderMode,
   generateArtFromImage,
   sanitizeCustomCharacters,
+  drawBackgroundOnCanvas,
 } from "@/lib/art";
+import {
+  DEFAULT_BACKGROUND_CONFIG,
+  DEFAULT_COLOR_TREATMENT_CONFIG,
+  type BackgroundConfig,
+  type ColorTreatmentConfig,
+  type BackgroundType,
+  type ColorTreatmentType,
+} from "@/lib/renderer/types";
 import { generateAnsiExport, generateHtmlExport, generateSvgExport } from "@/lib/artExport";
 import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatGeneratedTextOutput, generateCustomTextArt } from "@/lib/customText";
 import { DEFAULT_FIGLET_COLOUR_SETTINGS, FIGLET_COLOUR_STYLES, applyFigletColours, getFigletBackground, type FigletColourSettings } from "@/lib/textColour";
@@ -69,12 +78,98 @@ const RESOLUTION_MARKS = [48, 80, 112, 144, 176, 208, 240] as const;
 const USAGE_ENDPOINT = "/api/uses";
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-const IMAGE_PRESETS: Array<{ id: string; name: string; description: string; characterSet: CharacterSetId; dither: DitherAlgorithm; renderMode: RenderMode; invert: boolean; adjustments: ImageAdjustments }> = [
-  { id: "balanced", name: "Balanced", description: "Clean detail with a gentle ordered pattern.", characterSet: "ascii", dither: "bayer4", renderMode: "hybrid", invert: true, adjustments: DEFAULT_IMAGE_ADJUSTMENTS },
-  { id: "detail", name: "Fine detail", description: "More tonal steps with error diffusion.", characterSet: "unicodeFine", dither: "floyd-steinberg", renderMode: "hybrid", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 12, sharpness: 32 } },
-  { id: "ink", name: "Ink", description: "High-contrast blocks for graphic images.", characterSet: "blocks", dither: "bayer4", renderMode: "density", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 30, threshold: 0.42 } },
-  { id: "outline", name: "Outline", description: "Sobel-driven contours and silhouettes.", characterSet: "ascii", dither: "none", renderMode: "edge", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 18, sharpness: 48 } },
-  { id: "terminal", name: "Terminal", description: "Dense Braille cells for compact portraits.", characterSet: "braille", dither: "floyd-steinberg", renderMode: "hybrid", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 16, gamma: 0.85 } },
+type ImagePreset = {
+  id: string;
+  name: string;
+  description: string;
+  characterSet: CharacterSetId;
+  dither: DitherAlgorithm;
+  renderMode: RenderMode;
+  invert: boolean;
+  adjustments: ImageAdjustments;
+  palette?: PaletteId;
+  colorMode?: ColorMode;
+  colorCount?: ColorCount;
+  backgroundConfig?: BackgroundConfig;
+  colorTreatmentConfig?: ColorTreatmentConfig;
+};
+
+const IMAGE_PRESETS: ImagePreset[] = [
+  {
+    id: "clean-ascii",
+    name: "Clean ASCII",
+    description: "No dithering, moderate contrast, ASCII glyphs.",
+    characterSet: "ascii",
+    dither: "none",
+    renderMode: "hybrid",
+    invert: true,
+    adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 15 },
+    palette: "bw",
+    colorMode: "monochrome",
+  },
+  {
+    id: "classic-mac",
+    name: "Classic Mac",
+    description: "Atkinson dithering, monochrome, high contrast.",
+    characterSet: "ascii",
+    dither: "atkinson",
+    renderMode: "hybrid",
+    invert: true,
+    adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 25 },
+    palette: "bw",
+    colorMode: "monochrome",
+    colorTreatmentConfig: { type: "monochrome", duotoneShadow: "#000000", duotoneHighlight: "#ffffff", gradientMapStops: ["#000000", "#555555", "#aaaaaa", "#ffffff"], paletteColors: ["#000000", "#555555", "#aaaaaa", "#ffffff"] },
+  },
+  {
+    id: "newspaper",
+    name: "Newspaper",
+    description: "Bayer 4×4 ordered dither with posterised levels.",
+    characterSet: "unicode",
+    dither: "bayer4",
+    renderMode: "density",
+    invert: true,
+    adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, posteriseLevels: 4, contrast: 10 },
+    palette: "bw",
+    colorMode: "monochrome",
+  },
+  {
+    id: "terminal-preset",
+    name: "Terminal",
+    description: "Floyd–Steinberg error diffusion with phosphor green palette.",
+    characterSet: "braille",
+    dither: "floyd-steinberg",
+    renderMode: "hybrid",
+    invert: true,
+    adjustments: DEFAULT_IMAGE_ADJUSTMENTS,
+    palette: "terminal",
+    colorMode: "monochrome",
+  },
+  {
+    id: "cyberpunk-preset",
+    name: "Cyberpunk",
+    description: "Blue noise, duotone colors, and linear gradient background.",
+    characterSet: "unicodeFine",
+    dither: "blue-noise",
+    renderMode: "hybrid",
+    invert: true,
+    adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 15 },
+    colorMode: "colour",
+    colorTreatmentConfig: { type: "duotone", duotoneShadow: "#200030", duotoneHighlight: "#00ffff", gradientMapStops: ["#200030", "#800080", "#ff007f", "#00ffff"], paletteColors: ["#200030", "#800080", "#ff007f", "#00ffff"] },
+    backgroundConfig: { type: "linear", solidColor: "#050010", gradientStart: "#150025", gradientEnd: "#020008", gradientAngle: 135, gradientMidpoint: 0.5, radialInner: "#150025", radialOuter: "#020008", radialCenterX: 50, radialCenterY: 50, radialSpread: 100 },
+  },
+  {
+    id: "gameboy-preset",
+    name: "Game Boy",
+    description: "Bayer 4×4, Game Boy 4-color palette, block characters.",
+    characterSet: "blocks",
+    dither: "bayer4",
+    renderMode: "density",
+    invert: true,
+    adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, posteriseLevels: 4 },
+    colorMode: "colour",
+    colorTreatmentConfig: { type: "palette", duotoneShadow: "#0f380f", duotoneHighlight: "#9bbc0f", gradientMapStops: ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"], paletteColors: ["#0f380f", "#306230", "#8bac0f", "#9bbc0f"] },
+    backgroundConfig: { type: "solid", solidColor: "#0f380f", gradientStart: "#0f380f", gradientEnd: "#306230", gradientAngle: 180, gradientMidpoint: 0.5, radialInner: "#0f380f", radialOuter: "#306230", radialCenterX: 50, radialCenterY: 50, radialSpread: 100 },
+  },
 ];
 
 const canvasMetrics = (generated: GeneratedArt) => {
@@ -123,6 +218,81 @@ function ColouredFigletLine({ line, colors, fallback, row }: { line: string; col
   return <>{nodes}</>;
 }
 
+const COMPARE_ALGS: DitherAlgorithm[] = ["none", "bayer4", "floyd-steinberg", "blue-noise"];
+const COMPARE_LABELS = ["None (Pure Quantisation)", "Bayer 4×4 (Ordered)", "Floyd–Steinberg (Diffusion)", "Blue Noise (Stochastic)"];
+
+function DitherCompareModal({
+  image,
+  options,
+  onClose,
+}: {
+  image: HTMLImageElement | null;
+  options: ArtOptions;
+  onClose: () => void;
+}) {
+  const canvasRefs = [
+    useRef<HTMLCanvasElement>(null),
+    useRef<HTMLCanvasElement>(null),
+    useRef<HTMLCanvasElement>(null),
+    useRef<HTMLCanvasElement>(null),
+  ];
+
+  useEffect(() => {
+    if (!image) return;
+    COMPARE_ALGS.forEach(async (alg, idx) => {
+      const canvas = canvasRefs[idx]?.current;
+      if (!canvas) return;
+      try {
+        const algOptions = { ...options, ditherAlgorithm: alg };
+        const generated = await generateArtFromImage(image, algOptions);
+        const context = canvas.getContext("2d");
+        if (!context) return;
+        const metrics = canvasMetrics(generated);
+        canvas.width = metrics.width;
+        canvas.height = metrics.height;
+        drawBackgroundOnCanvas(context, canvas.width, canvas.height, generated.backgroundConfig, generated.background);
+        context.font = `${metrics.fontSize}px var(--font-mono), ui-monospace, monospace`;
+        context.textBaseline = "top";
+        generated.lines.forEach((line, row) => Array.from(line).forEach((glyph, column) => {
+          context.fillStyle = generated.colors[row]?.[column] ?? generated.foreground;
+          context.fillText(glyph, metrics.padding + column * metrics.glyphAdvance, metrics.padding + row * metrics.lineHeight);
+        }));
+      } catch (err) {
+        console.error("Comparison render error", err);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [image, options]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4 backdrop-blur-md">
+      <div className="flex max-h-[90vh] w-full max-w-[1200px] flex-col rounded-md border border-white/10 bg-zinc-950 p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/10 pb-4">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Dither Comparison</h3>
+            <p className="text-xs text-slate-400">See how different algorithms behave under your current settings.</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-sm border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white hover:bg-white/10">
+            Close
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-4 overflow-auto py-6 md:grid-cols-4">
+          {COMPARE_ALGS.map((alg, idx) => (
+            <div key={alg} className="flex flex-col rounded-sm border border-white/5 bg-black/40 p-2">
+              <span className="mb-2 text-[10px] font-medium uppercase tracking-[0.2em] text-slate-400">
+                {COMPARE_LABELS[idx]}
+              </span>
+              <div className="relative flex flex-1 items-center justify-center overflow-hidden rounded-sm bg-black p-2 min-h-[250px]">
+                <canvas ref={canvasRefs[idx]} className="max-h-[350px] max-w-full object-contain" />
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const inputRef = useRef<HTMLInputElement>(null);
   const fileUrlRef = useRef<string | null>(null);
@@ -155,9 +325,13 @@ export default function Home() {
   const [isRendering, setIsRendering] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [imageReady, setImageReady] = useState(false);
+  const [loadedImage, setLoadedImage] = useState<HTMLImageElement | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [comparisonPosition, setComparisonPosition] = useState(50);
+  const [showDitherCompare, setShowDitherCompare] = useState(false);
+  const [backgroundConfig, setBackgroundConfig] = useState<BackgroundConfig>(DEFAULT_BACKGROUND_CONFIG);
+  const [colorTreatmentConfig, setColorTreatmentConfig] = useState<ColorTreatmentConfig>(DEFAULT_COLOR_TREATMENT_CONFIG);
 
   const activeTextStyle = CUSTOM_TEXT_STYLES[textStyleIndex] ?? CUSTOM_TEXT_STYLES[0];
   const activePalette = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
@@ -188,7 +362,12 @@ export default function Home() {
     setImageReady(false);
     const image = new Image();
     image.decoding = "async";
-    image.onload = () => { imageRef.current = image; setImageReady(true); setStatus("Image loaded. Tune the live renderer below."); };
+    image.onload = () => {
+      imageRef.current = image;
+      setLoadedImage(image);
+      setImageReady(true);
+      setStatus("Image loaded. Tune the live renderer below.");
+    };
     image.onerror = () => { setStatus("That file could not be loaded as an image."); setImageReady(false); };
     image.src = url;
   }, []);
@@ -354,7 +533,7 @@ export default function Home() {
       setInvert(params.get("invert") !== "0");
       setColorMode(params.get("colour") === "mono" ? "monochrome" : "colour");
       setColorCount(COLOR_COUNTS.includes(numeric("colors", colorCount) as ColorCount) ? numeric("colors", colorCount) as ColorCount : colorCount);
-      setAdjustments({ brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), preBlur: numeric("preblur", DEFAULT_IMAGE_ADJUSTMENTS.preBlur), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
+      setAdjustments({ ...DEFAULT_IMAGE_ADJUSTMENTS, brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), preBlur: numeric("preblur", DEFAULT_IMAGE_ADJUSTMENTS.preBlur), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
       setBackgroundSeparation((current) => ({
         ...current,
         enabled: params.get("background") === "1",
@@ -419,6 +598,11 @@ export default function Home() {
     setRenderMode(preset.renderMode);
     setInvert(preset.invert);
     setAdjustments(preset.adjustments);
+    if (preset.palette) setPalette(preset.palette);
+    if (preset.colorMode) setColorMode(preset.colorMode);
+    if (preset.colorCount !== undefined) setColorCount(preset.colorCount);
+    if (preset.backgroundConfig) setBackgroundConfig(preset.backgroundConfig);
+    if (preset.colorTreatmentConfig) setColorTreatmentConfig(preset.colorTreatmentConfig);
     setStatus(`${preset.name} preset applied.`);
   };
 
@@ -461,7 +645,7 @@ export default function Home() {
         <section className="flex min-h-[72vh] flex-col rounded-md border border-white/10 bg-black/60 p-3">
           <div className="mb-3 flex justify-between px-1 text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>{mode === "text" ? "ASCII output" : "Preview"}</span><span>{artLines.length ? `${previewColumns} × ${artLines.length}` : "waiting"}</span></div>
           {mode === "text" ? <pre style={{ backgroundColor: textBackground ?? "transparent", lineHeight: figletColourSettings.lineHeight }} className="min-h-0 flex-1 overflow-auto rounded-md border border-white/10 p-5 font-mono text-[10px]">{displayArt ? displayArt.lines.map((line, row) => <Fragment key={`${row}-${line}`}><ColouredFigletLine line={line} colors={displayArt.colors[row] ?? []} fallback={displayArt.foreground} row={row} />{row < displayArt.lines.length - 1 ? "\n" : null}</Fragment>) : "Type text to generate an ASCII banner."}</pre> : <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-auto rounded-md border border-white/10 bg-black p-2"><div className="relative w-full" style={{ aspectRatio: previewAspect }}><canvas ref={previewCanvasRef} className={artLines.length ? "absolute inset-0 h-full w-full" : "hidden"} />{showComparison && imageUrl && artLines.length ? <div className="absolute inset-y-0 left-0 overflow-hidden border-r border-emerald-200/70" style={{ width: `${comparisonPosition}%` }}>{/* Blob URLs are local, user-supplied images and intentionally bypass Next image optimisation. */}<img src={imageUrl} alt="Original image comparison" className="h-full w-full object-fill" /></div> : null}{!artLines.length ? <p className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-[0.26em] text-slate-500">drop image</p> : null}{isRendering ? <div className="absolute inset-0 grid place-items-center bg-black/55 text-[10px] uppercase tracking-[0.3em] text-emerald-200">Rendering</div> : null}</div></div>}
-          {mode === "image" && artLines.length ? <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3"><button type="button" onClick={() => setShowComparison((current) => !current)} className={`rounded-sm border px-3 py-1.5 text-xs transition hover:bg-white/10 ${showComparison ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>{showComparison ? "Hide before" : "Compare before"}</button>{showComparison ? <label className="flex flex-1 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500"><span>Before</span><input aria-label="Before and after comparison position" type="range" min="0" max="100" value={comparisonPosition} onChange={(event) => setComparisonPosition(Number(event.target.value))} className="h-1.5 flex-1 accent-emerald-300" /><span>After</span></label> : null}</div> : null}
+          {mode === "image" && artLines.length ? <div className="mt-3 flex items-center gap-3 border-t border-white/10 pt-3"><button type="button" onClick={() => setShowComparison((current) => !current)} className={`rounded-sm border px-3 py-1.5 text-xs transition hover:bg-white/10 ${showComparison ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-300"}`}>{showComparison ? "Hide before" : "Compare before"}</button><button type="button" onClick={() => setShowDitherCompare(true)} className="rounded-sm border border-emerald-300/30 bg-emerald-300/5 px-3 py-1.5 text-xs text-emerald-300 transition hover:bg-emerald-300/10">Compare Dithers</button>{showComparison ? <label className="flex flex-1 items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500"><span>Before</span><input aria-label="Before and after comparison position" type="range" min="0" max="100" value={comparisonPosition} onChange={(event) => setComparisonPosition(Number(event.target.value))} className="h-1.5 flex-1 accent-emerald-300" /><span>After</span></label> : null}</div> : null}
           <p className="mt-2 text-xs text-slate-500">{status}</p>
         </section>
 
@@ -471,7 +655,7 @@ export default function Home() {
           {mode === "image" ? <>
           <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
 
-          {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /></div> : null}
+          {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500 mt-2">Fit Mode<select value={adjustments.fitMode} onChange={(e) => updateAdjustment("fitMode", e.target.value as any)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/40"><option value="stretch">Stretch</option><option value="contain">Contain</option><option value="cover">Cover</option></select></label>{adjustments.fitMode === "cover" && ( <div className="space-y-2 mt-2"><RangeControl label="Crop X" value={adjustments.cropX} min={0} max={100} step={5} suffix="%" onChange={(value) => updateAdjustment("cropX", value)} /><RangeControl label="Crop Y" value={adjustments.cropY} min={0} max={100} step={5} suffix="%" onChange={(value) => updateAdjustment("cropY", value)} /></div> )}<RangeControl label="Character Aspect" value={adjustments.aspectRatio} min={0.2} max={1.5} step={0.05} onChange={(value) => updateAdjustment("aspectRatio", value)} format={(value) => value === 1.0 ? "Square (1.0)" : value === 0.6 ? "Standard (0.6)" : value.toFixed(2)} /><RangeControl label="Posterise Levels" value={adjustments.posteriseLevels} min={0} max={32} step={1} onChange={(value) => updateAdjustment("posteriseLevels", value)} format={(value) => value === 0 ? "Off (Auto)" : `${value} levels`} /><RangeControl label="Grain Amount" value={adjustments.grainAmount} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("grainAmount", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /></div> : null}
 
           <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Colour</h2><button type="button" onClick={() => selectImageColour("colour")} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "colour" ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">Colour</span><span className="h-3 w-3 rounded-sm bg-gradient-to-br from-rose-400 via-amber-300 to-sky-400" /></button>{PALETTES.map((option) => <button key={option.id} type="button" onClick={() => selectImageColour("monochrome", option.id)} className={`flex w-full items-center justify-between rounded-sm border px-3 py-2 text-left transition hover:bg-white/10 ${colorMode === "monochrome" && palette === option.id ? "border-emerald-300/40 bg-emerald-300/10" : "border-white/10"}`}><span className="text-sm text-white">{option.name}</span><span className="h-3 w-3 rounded-sm" style={{ backgroundColor: option.foreground }} /></button>)}{colorMode === "colour" ? <div className="border-t border-white/10 pt-3"><div className="mb-2 flex justify-between text-[10px] uppercase tracking-[0.2em] text-slate-500"><span>Image colours</span><span>{colorCount === 0 ? "Full" : colorCount}</span></div><div className="grid grid-cols-5 gap-1">{COLOR_COUNTS.map((count) => <button key={count} type="button" onClick={() => { setColorCount(count); setGeneratedArt(null); setShowComparison(false); }} className={`rounded-sm border px-1 py-2 text-xs transition hover:bg-white/10 ${colorCount === count ? "border-emerald-300/40 bg-emerald-300/10 text-white" : "border-white/10 text-slate-400"}`}>{count === 0 ? "Full" : count}</button>)}</div></div> : null}</div>
           </> : null}
@@ -479,5 +663,25 @@ export default function Home() {
         </aside>
       </div>
     </div>
+    {showDitherCompare && loadedImage && (
+      <DitherCompareModal
+        image={loadedImage}
+        options={{
+          columns: resolutionColumns,
+          characterSet,
+          customText: customGlyphs,
+          invert,
+          palette,
+          colorMode,
+          colorCount,
+          renderMode,
+          adjustments,
+          backgroundSeparation,
+          backgroundConfig,
+          colorTreatmentConfig,
+        }}
+        onClose={() => setShowDitherCompare(false)}
+      />
+    )}
   </main>;
 }
