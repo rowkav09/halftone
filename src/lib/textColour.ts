@@ -1,4 +1,5 @@
 import type { GeneratedArt } from "@/lib/art";
+import { interpolateColour, rgbToHex, safeColour } from "@/lib/colour";
 
 export const FIGLET_COLOUR_STYLES = [
   { id: "monochrome", name: "Monochrome" },
@@ -37,24 +38,7 @@ export const DEFAULT_FIGLET_COLOUR_SETTINGS: FigletColourSettings = {
   lineHeight: 1,
 };
 
-const HEX_COLOUR = /^#[\da-f]{6}$/i;
 const FALLBACK_COLOUR = "#e8edf2";
-const isHexColour = (value: string) => HEX_COLOUR.test(value);
-const safeColour = (value: string, fallback = FALLBACK_COLOUR) => isHexColour(value) ? value : fallback;
-
-const hexToRgb = (value: string) => {
-  const safe = safeColour(value);
-  return [Number.parseInt(safe.slice(1, 3), 16), Number.parseInt(safe.slice(3, 5), 16), Number.parseInt(safe.slice(5, 7), 16)] as const;
-};
-
-const componentToHex = (value: number) => Math.round(Math.min(255, Math.max(0, value))).toString(16).padStart(2, "0");
-
-const interpolate = (start: string, end: string, progress: number) => {
-  const [startRed, startGreen, startBlue] = hexToRgb(start);
-  const [endRed, endGreen, endBlue] = hexToRgb(end);
-  const amount = Math.min(1, Math.max(0, progress));
-  return `#${componentToHex(startRed + (endRed - startRed) * amount)}${componentToHex(startGreen + (endGreen - startGreen) * amount)}${componentToHex(startBlue + (endBlue - startBlue) * amount)}`;
-};
 
 const rainbow = (progress: number) => {
   const hue = ((progress % 1) + 1) % 1 * 360;
@@ -64,7 +48,7 @@ const rainbow = (progress: number) => {
   const secondary = chroma * (1 - Math.abs(sector % 2 - 1));
   const [red, green, blue] = sector < 1 ? [chroma, secondary, 0] : sector < 2 ? [secondary, chroma, 0] : sector < 3 ? [0, chroma, secondary] : sector < 4 ? [0, secondary, chroma] : sector < 5 ? [secondary, 0, chroma] : [chroma, 0, secondary];
   const match = lightness - chroma / 2;
-  return `#${componentToHex((red + match) * 255)}${componentToHex((green + match) * 255)}${componentToHex((blue + match) * 255)}`;
+  return rgbToHex((red + match) * 255, (green + match) * 255, (blue + match) * 255);
 };
 
 export const getFigletBackground = (settings: FigletColourSettings) => {
@@ -83,17 +67,18 @@ export const applyFigletColours = (art: GeneratedArt, settings: FigletColourSett
     const vertical = maximumRows <= 1 ? 0 : row / (maximumRows - 1);
     switch (settings.style) {
       case "solid": return safeColour(settings.solid);
-      case "horizontal": return interpolate(settings.gradientStart, settings.gradientEnd, horizontal);
-      case "vertical": return interpolate(settings.gradientStart, settings.gradientEnd, vertical);
+      case "horizontal": return interpolateColour(settings.gradientStart, settings.gradientEnd, horizontal);
+      case "vertical": return interpolateColour(settings.gradientStart, settings.gradientEnd, vertical);
       case "rainbow": return rainbow(horizontal * 0.9);
       case "terminal": return "#c8ffbf";
       case "amber": return "#ffd7a0";
-      case "custom": return interpolate(settings.customStart, settings.customEnd, horizontal);
+      case "custom": return interpolateColour(settings.customStart, settings.customEnd, horizontal);
       default: return FALLBACK_COLOUR;
     }
   };
 
   const colors = art.lines.map((line, row) => Array.from(line, (_, column) => toneFor(column, row)));
   const foreground = colors[0]?.[0] ?? FALLBACK_COLOUR;
-  return { ...art, colors, foreground, background: getFigletBackground(settings) ?? art.background };
+  const background = getFigletBackground(settings);
+  return background ? { ...art, colors, foreground, background: { kind: "solid", colour: background }, backgroundColour: background } : { ...art, colors, foreground };
 };

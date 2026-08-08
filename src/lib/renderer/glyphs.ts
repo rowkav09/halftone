@@ -1,4 +1,5 @@
 import type { ToneField } from "@/lib/renderer/types";
+import { toneCurveValue } from "@/lib/renderer/tone";
 
 const densityCache = new Map<string, string[]>();
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
@@ -39,13 +40,13 @@ export const orderGlyphsByDensity = (characters: string) => {
 };
 
 export const glyphForTone = (tone: number, glyphs: string[]) => {
-  const index = Math.round(Math.pow(clamp(tone), 0.72) * Math.max(0, glyphs.length - 1));
+  const index = Math.round(clamp(tone) * Math.max(0, glyphs.length - 1));
   return glyphs[index] ?? glyphs[glyphs.length - 1] ?? " ";
 };
 
 /** Maps a Sobel gradient to the matching tangent stroke: —, /, |, or \\. */
 export const edgeDirectionGlyphForTone = (tone: number, direction: number) => {
-  if (tone < 0.08) return " ";
+  if (tone < toneCurveValue(0.08)) return " ";
   const tangent = direction + Math.PI / 2;
   const index = ((Math.round(tangent / (Math.PI / 4)) % 4) + 4) % 4;
   return ["-", "/", "|", "\\"][index] ?? "-";
@@ -54,8 +55,8 @@ export const edgeDirectionGlyphForTone = (tone: number, direction: number) => {
 const glyphHash = (column: number, row: number) => Math.abs((column * 17 + row * 31 + column * row * 7) % 997);
 
 export const textureGlyphForTone = (tone: number, set: "matrix" | "symbols" | "binary", column: number, row: number) => {
-  if (set === "binary") return tone >= 0.5 ? "1" : "0";
-  if (tone < 0.08) return " ";
+  if (set === "binary") return tone >= toneCurveValue(0.5) ? "1" : "0";
+  if (tone < toneCurveValue(0.08)) return " ";
   if (set === "matrix") {
     const glyphs = ["ｱ", "ｲ", "ｳ", "ｴ", "ｵ", "0", "1", "2", "3"];
     return glyphs[glyphHash(column, row) % glyphs.length] ?? " ";
@@ -63,7 +64,7 @@ export const textureGlyphForTone = (tone: number, set: "matrix" | "symbols" | "b
   const light = [".", "`", "'", ",", "-"];
   const middle = [":", ";", "!", "<", ">", "/", "\\", "|"];
   const heavy = ["[", "]", "{", "}", "(", ")"];
-  const glyphs = tone < 0.34 ? light : tone < 0.7 ? middle : heavy;
+  const glyphs = tone < toneCurveValue(0.34) ? light : tone < toneCurveValue(0.7) ? middle : heavy;
   return glyphs[glyphHash(column, row) % glyphs.length] ?? " ";
 };
 
@@ -77,7 +78,7 @@ export const brailleGlyphAt = (field: ToneField, cellX: number, cellY: number) =
   let mask = 0;
   for (const [dotX, dotY, bit] of BRAILLE_DOTS) {
     const tone = field.values[(cellY * 4 + dotY) * field.width + cellX * 2 + dotX] ?? 0;
-    if (tone >= 0.5) mask |= bit;
+    if (tone >= toneCurveValue(0.5)) mask |= bit;
   }
   return String.fromCodePoint(0x2800 + mask);
 };

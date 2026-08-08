@@ -1,19 +1,21 @@
 import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
-import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { adjustImageData, combineToneAndEdges, luminanceFromRgb, sobelEdgeDetails } from "@/lib/renderer/processing";
+import { applyToneCurve } from "@/lib/renderer/tone";
+import { applyGrain } from "@/lib/renderer/grain";
+import { clampAspectFactor, getSourceRegion, type CropPosition, type FitMode } from "@/lib/renderer/sampling";
+import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
+import { hexToRgb, interpolateColour, isHexColour, rgbToHex, squaredDistance, type Rgb } from "@/lib/colour";
+import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colourTreatment";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
+  DITHER_METADATA,
   RENDER_MODES,
   type DitherAlgorithm,
   type ImageAdjustments,
   type RenderMode,
-  type Rgb,
   type ToneField,
-  type BackgroundConfig,
-  type ColorTreatmentConfig,
-  DEFAULT_BACKGROUND_CONFIG,
-  DEFAULT_COLOR_TREATMENT_CONFIG,
 } from "@/lib/renderer/types";
 
 export const CHARACTER_SETS = {
@@ -60,6 +62,9 @@ export const DEFAULT_BACKGROUND_SEPARATION: BackgroundSeparationOptions = {
 
 export type ArtOptions = {
   columns: number;
+  aspectFactor?: number;
+  fitMode?: FitMode;
+  cropPosition?: CropPosition;
   characterSet: CharacterSetId;
   customText: string;
   invert: boolean;
@@ -70,8 +75,8 @@ export type ArtOptions = {
   renderMode?: RenderMode;
   adjustments?: Partial<ImageAdjustments>;
   backgroundSeparation?: BackgroundSeparationOptions;
-  backgroundConfig?: BackgroundConfig;
-  colorTreatmentConfig?: ColorTreatmentConfig;
+  background?: Background;
+  colourTreatment?: ColourTreatment;
 };
 
 export type GeneratedArt = {
@@ -80,11 +85,12 @@ export type GeneratedArt = {
   columns: number;
   rows: number;
   foreground: string;
-  background: string;
-  backgroundConfig?: BackgroundConfig;
+  background: Background;
+  backgroundColour: string;
+  colourTreatment: ColourTreatment;
 };
 
-export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, RENDER_MODES };
+export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, DITHER_METADATA, RENDER_MODES };
 export type { DitherAlgorithm, ImageAdjustments, RenderMode };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -101,68 +107,20 @@ export const getCharactersForSet = (characterSet: CharacterSetId, customText: st
 
 const getPalette = (palette: PaletteId) => PALETTES.find((option) => option.id === palette) ?? PALETTES[0];
 
-const toHexColor = (red: number, green: number, blue: number) => {
-  const componentToHex = (component: number) => Math.round(clamp(component, 0, 255)).toString(16).padStart(2, "0");
-  return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
-};
-
-const fromHexColor = (color: string): Rgb | null => {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/iu.exec(color);
-  return match ? [Number.parseInt(match[1] ?? "00", 16), Number.parseInt(match[2] ?? "00", 16), Number.parseInt(match[3] ?? "00", 16)] : null;
-};
-
-const blendColors = (background: string, foreground: string, mix: number) => {
-  const from = fromHexColor(background);
-  const to = fromHexColor(foreground);
-  if (!from || !to) return foreground;
-  return toHexColor(
-    from[0] + (to[0] - from[0]) * mix,
-    from[1] + (to[1] - from[1]) * mix,
-    from[2] + (to[2] - from[2]) * mix,
+const blendColors = (background: Rgb, foreground: string, mix: number) => {
+  if (!isHexColour(foreground)) return foreground;
+  const to = hexToRgb(foreground);
+  return rgbToHex(
+    background[0] + (to[0] - background[0]) * mix,
+    background[1] + (to[1] - background[1]) * mix,
+    background[2] + (to[2] - background[2]) * mix,
   );
-};
-
-const hexToRgb = (hex: string): [number, number, number] => {
-  const clean = hex.replace(/^#/u, "");
-  const num = Number.parseInt(clean, 16);
-  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
-};
-
-const rgbToHex = (r: number, g: number, b: number): string => {
-  const componentToHex = (component: number) => Math.round(clamp(component, 0, 255)).toString(16).padStart(2, "0");
-  return `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
-};
-
-const interpolateColors = (c1: string, c2: string, ratio: number): string => {
-  const [r1, g1, b1] = hexToRgb(c1);
-  const [r2, g2, b2] = hexToRgb(c2);
-  const r = r1 + (r2 - r1) * ratio;
-  const g = g1 + (g2 - g1) * ratio;
-  const b = b1 + (b2 - b1) * ratio;
-  return rgbToHex(r, g, b);
-};
-
-const getGradientMapColor = (stops: string[], ratio: number): string => {
-  if (stops.length === 0) return "#ffffff";
-  if (stops.length === 1) return stops[0] ?? "#ffffff";
-  const cappedRatio = clamp(ratio, 0, 1);
-  const segments = stops.length - 1;
-  const segment = Math.min(segments - 1, Math.floor(cappedRatio * segments));
-  const segmentRatio = (cappedRatio - segment / segments) * segments;
-  return interpolateColors(stops[segment] ?? "#ffffff", stops[segment + 1] ?? "#ffffff", segmentRatio);
 };
 
 // Dark source pixels still need enough light to be legible on the black canvas.
 const toReadableColor = (red: number, green: number, blue: number, tone: number) => {
   const lift = 0.32 + 0.5 * clamp(tone, 0, 1);
-  return toHexColor(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
-};
-
-const squaredDistance = (first: Rgb, second: Rgb) => {
-  const red = first[0] - second[0];
-  const green = first[1] - second[1];
-  const blue = first[2] - second[2];
-  return red * red + green * green + blue * blue;
+  return rgbToHex(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
 };
 
 const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rgb[] | null => {
@@ -210,7 +168,11 @@ const getImagePalette = (sampled: Uint8ClampedArray, colorCount: ColorCount): Rg
 const getClosestPaletteColor = (red: number, green: number, blue: number, palette: Rgb[] | null): Rgb => {
   if (!palette?.length) return [red, green, blue];
   const color: Rgb = [red, green, blue];
-  return palette.reduce((closest, candidate) => squaredDistance(color, candidate) < squaredDistance(color, closest) ? candidate : closest);
+  return palette.reduce((closest, candidate) => {
+    const distance = squaredDistance(color, candidate);
+    const closestDistance = squaredDistance(color, closest);
+    return distance < closestDistance ? candidate : closest;
+  });
 };
 
 const createCanvas = (width: number, height: number) => {
@@ -296,24 +258,7 @@ const averageCellColour = (data: Uint8ClampedArray, width: number, height: numbe
   return [red / Math.max(1, count), green / Math.max(1, count), blue / Math.max(1, count)] as Rgb;
 };
 
-const addGrain = (field: ToneField, amount: number, seed: number): ToneField => {
-  if (amount <= 0) return field;
-  const values = new Float32Array(field.values.length);
-  let currentSeed = seed;
-  const random = () => {
-    let t = currentSeed += 0x6D2B79F5;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-  for (let index = 0; index < field.values.length; index += 1) {
-    const noise = random() - 0.5; // -0.5 to 0.5
-    values[index] = clamp((field.values[index] ?? 0) + noise * amount, 0, 1);
-  }
-  return { values, width: field.width, height: field.height };
-};
-
-const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, levels: number) => {
+const renderToneField = (luminance: Float32Array, width: number, height: number, options: ArtOptions, glyphCount: number, isBraille: boolean) => {
   const base: ToneField = { values: luminance, width, height };
   const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const mode = options.renderMode ?? "density";
@@ -321,8 +266,14 @@ const renderToneField = (luminance: Float32Array, width: number, height: number,
   const edgeDetails = mode === "density" ? null : sobelEdgeDetails(base);
   const edges = edgeDetails?.edge ?? { values: new Float32Array(base.values.length), width, height };
   const combined = combineToneAndEdges(base, edges, options.invert, mode, adjustments.threshold);
-  const grained = addGrain(combined, adjustments.grainAmount ?? 0, adjustments.grainSeed ?? 42);
-  return { tone: applyDither(grained, options.ditherAlgorithm ?? "none", adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
+  const algorithm = options.ditherAlgorithm ?? "none";
+  const automaticLevels = glyphCount - 1;
+  const levels = isBraille ? 1 : adjustments.toneLevels >= 2
+    ? clamp(Math.round(adjustments.toneLevels), 2, 16)
+    : Math.max(1, automaticLevels);
+  const curved = applyToneCurve(combined);
+  const grained = applyGrain(curved.values, adjustments.grain, adjustments.grainSeed);
+  return { tone: applyDither({ values: grained, width, height }, algorithm, adjustments.ditherStrength, levels), directions: edgeDetails?.directions ?? null };
 };
 
 const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
@@ -337,22 +288,6 @@ const smoothstep = (edgeStart: number, edgeEnd: number, value: number) => {
  * artistic separator rather than a claim of semantic subject detection.
  */
 const createForegroundLikelihood = (data: Uint8ClampedArray, luminance: Float32Array, width: number, height: number): ToneField => {
-  let borderRed = 0;
-  let borderGreen = 0;
-  let borderBlue = 0;
-  let borderCount = 0;
-  const addBorder = (x: number, y: number) => {
-    const index = (y * width + x) * 4;
-    borderRed += data[index] ?? 0;
-    borderGreen += data[index + 1] ?? 0;
-    borderBlue += data[index + 2] ?? 0;
-    borderCount += 1;
-  };
-  for (let x = 0; x < width; x += 1) { addBorder(x, 0); if (height > 1) addBorder(x, height - 1); }
-  for (let y = 1; y < height - 1; y += 1) { addBorder(0, y); if (width > 1) addBorder(width - 1, y); }
-  const baseRed = borderRed / Math.max(1, borderCount);
-  const baseGreen = borderGreen / Math.max(1, borderCount);
-  const baseBlue = borderBlue / Math.max(1, borderCount);
   const edges = sobelEdgeDetails({ values: luminance, width, height }).edge.values;
   const values = new Float32Array(width * height);
   for (let y = 0; y < height; y += 1) {
@@ -362,6 +297,29 @@ const createForegroundLikelihood = (data: Uint8ClampedArray, luminance: Float32A
       const red = data[colorIndex] ?? 0;
       const green = data[colorIndex + 1] ?? 0;
       const blue = data[colorIndex + 2] ?? 0;
+
+      // Adaptive Background Estimation: find the nearest border edge pixel's colour locally.
+      const distLeft = x;
+      const distRight = width - 1 - x;
+      const distTop = y;
+      const distBottom = height - 1 - y;
+      const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+      let borderX = x;
+      let borderY = y;
+      if (minDist === distLeft) {
+        borderX = 0;
+      } else if (minDist === distRight) {
+        borderX = width - 1;
+      } else if (minDist === distTop) {
+        borderY = 0;
+      } else {
+        borderY = height - 1;
+      }
+      const borderIndex = (borderY * width + borderX) * 4;
+      const baseRed = data[borderIndex] ?? 0;
+      const baseGreen = data[borderIndex + 1] ?? 0;
+      const baseBlue = data[borderIndex + 2] ?? 0;
+
       const colourDistance = Math.sqrt((red - baseRed) ** 2 + (green - baseGreen) ** 2 + (blue - baseBlue) ** 2) / 441.7;
       const normalX = (x + 0.5) / width - 0.5;
       const normalY = (y + 0.5) / height - 0.5;
@@ -380,10 +338,9 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   const palette = getPalette(options.palette);
   const isBraille = options.characterSet === "braille";
   const columns = clamp(options.columns, 24, 240);
-  const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
-  const aspectRatio = adjustments.aspectRatio ?? 0.6;
-  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectRatio));
-
+  // The default 0.6 ratio is the renderer's historical effective cell aspect.
+  const aspectFactor = clampAspectFactor(options.aspectFactor ?? 0.6);
+  const rows = Math.max(1, Math.round((sourceCanvas.height / sourceCanvas.width) * columns * aspectFactor));
   const sampleWidth = isBraille ? columns * 2 : columns;
   const sampleHeight = isBraille ? rows * 4 : rows;
   const oversample = 2;
@@ -394,64 +351,42 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
   if (!sampleContext) throw new Error("Canvas 2D context is unavailable.");
   sampleContext.imageSmoothingEnabled = true;
   sampleContext.imageSmoothingQuality = "high";
+  const sourceRegion = getSourceRegion(
+    sourceCanvas.width,
+    sourceCanvas.height,
+    sourceSampleWidth,
+    sourceSampleHeight,
+    options.fitMode ?? "stretch",
+    options.cropPosition ?? "center",
+  );
+  sampleContext.clearRect(0, 0, sourceSampleWidth, sourceSampleHeight);
+  sampleContext.drawImage(
+    sourceCanvas,
+    sourceRegion.sourceX,
+    sourceRegion.sourceY,
+    sourceRegion.sourceWidth,
+    sourceRegion.sourceHeight,
+    sourceRegion.destinationX,
+    sourceRegion.destinationY,
+    sourceRegion.destinationWidth,
+    sourceRegion.destinationHeight,
+  );
 
-  // Fit modes: Contain, Cover, Stretch
-  const fitMode = adjustments.fitMode ?? "stretch";
-  if (fitMode === "stretch") {
-    sampleContext.drawImage(sourceCanvas, 0, 0, sourceSampleWidth, sourceSampleHeight);
-  } else if (fitMode === "contain") {
-    const srcAspect = sourceCanvas.width / sourceCanvas.height;
-    const dstAspect = sourceSampleWidth / sourceSampleHeight;
-    let drawW = sourceSampleWidth;
-    let drawH = sourceSampleHeight;
-    let drawX = 0;
-    let drawY = 0;
-    if (srcAspect > dstAspect) {
-      drawH = sourceSampleWidth / srcAspect;
-      drawY = (sourceSampleHeight - drawH) / 2;
-    } else {
-      drawW = sourceSampleHeight * srcAspect;
-      drawX = (sourceSampleWidth - drawW) / 2;
-    }
-    sampleContext.fillStyle = "#000000";
-    sampleContext.fillRect(0, 0, sourceSampleWidth, sourceSampleHeight);
-    sampleContext.drawImage(sourceCanvas, drawX, drawY, drawW, drawH);
-  } else if (fitMode === "cover") {
-    const srcAspect = sourceCanvas.width / sourceCanvas.height;
-    const dstAspect = sourceSampleWidth / sourceSampleHeight;
-    let drawW = sourceSampleWidth;
-    let drawH = sourceSampleHeight;
-    let drawX = 0;
-    let drawY = 0;
-    if (srcAspect > dstAspect) {
-      drawW = sourceSampleHeight * srcAspect;
-      drawX = -(drawW - sourceSampleWidth) * ((adjustments.cropX ?? 50) / 100);
-    } else {
-      drawH = sourceSampleWidth / srcAspect;
-      drawY = -(drawH - sourceSampleHeight) * ((adjustments.cropY ?? 50) / 100);
-    }
-    sampleContext.fillStyle = "#000000";
-    sampleContext.fillRect(0, 0, sourceSampleWidth, sourceSampleHeight);
-    sampleContext.drawImage(sourceCanvas, drawX, drawY, drawW, drawH);
-  }
-
+  const adjustments = { ...DEFAULT_IMAGE_ADJUSTMENTS, ...options.adjustments };
   const sampled = sampleContext.getImageData(0, 0, sourceSampleWidth, sourceSampleHeight).data;
   const prefiltered = prefilterImageData(sampled, sourceSampleWidth, sourceSampleHeight, adjustments.preBlur);
   const downsampled = areaAverageImageData(prefiltered, sourceSampleWidth, sourceSampleHeight, sampleWidth, sampleHeight);
   const processed = adjustImageData(downsampled, sampleWidth, sampleHeight, adjustments);
   const rawCharacters = getCharactersForSet(options.characterSet, options.customText);
   const genericGlyphs = orderGlyphsByDensity(rawCharacters);
-
-  // Posterisation / tone levels control
-  const levels = adjustments.posteriseLevels > 0
-    ? adjustments.posteriseLevels
-    : isBraille
-      ? 1
-      : Math.max(1, genericGlyphs.length - 1);
-
-  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, levels);
-  const imagePalette = options.colorMode === "colour" ? getImagePalette(processed.data, options.colorCount) : null;
+  const { tone: toneField, directions } = renderToneField(processed.luminance, sampleWidth, sampleHeight, options, Math.max(1, genericGlyphs.length - 1), isBraille);
+  const treatment: ColourTreatment = options.colourTreatment ?? (options.colorMode === "colour"
+    ? { kind: "source" }
+    : { kind: "monochrome", colour: palette.foreground });
+  const imagePalette = getImagePalette(processed.data, options.colorCount);
+  const resolveColour = createColourTreatmentResolver(treatment, imagePalette ?? []);
   const separation = options.backgroundSeparation?.enabled ? options.backgroundSeparation : null;
+  const separationColour = separation && isHexColour(separation.colour) ? hexToRgb(separation.colour) : null;
   const backgroundGlyphs = separation ? orderGlyphsByDensity(getCharactersForSet(separation.characterSet, "")) : [];
   const foregroundLikelihood = separation ? createForegroundLikelihood(processed.data, processed.luminance, sampleWidth, sampleHeight) : null;
   const lines: string[] = [];
@@ -480,51 +415,19 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
           : glyphForTone(tone, backgroundGlyphs)
         : foregroundGlyph;
       const glyph = foregroundMix >= 0.5 ? foregroundGlyph : backgroundGlyph;
-
       const [red, green, blue] = averageCellColour(processed.data, sampleWidth, sampleHeight, column, row, horizontalSample, verticalSample);
       const [displayRed, displayGreen, displayBlue] = getClosestPaletteColor(red, green, blue, imagePalette);
-      const cellLuminance = (red * 0.2126 + green * 0.7152 + blue * 0.0722) / 255;
-
       line += glyph;
-
-      // Apply Colour Treatment config
-      let foregroundColour: string = palette.foreground;
-      const treatment = options.colorTreatmentConfig ?? { type: options.colorMode === "colour" ? "source" : "monochrome" } as ColorTreatmentConfig;
-      if (treatment.type === "source") {
-        foregroundColour = toReadableColor(displayRed, displayGreen, displayBlue, tone);
-      } else if (treatment.type === "monochrome") {
-        foregroundColour = palette.foreground;
-      } else if (treatment.type === "duotone") {
-        foregroundColour = interpolateColors(treatment.duotoneShadow, treatment.duotoneHighlight, cellLuminance);
-      } else if (treatment.type === "gradient-map") {
-        foregroundColour = getGradientMapColor(treatment.gradientMapStops, cellLuminance);
-      } else if (treatment.type === "palette") {
-        const m = treatment.paletteColors.length;
-        if (m > 0) {
-          const idx = Math.min(m - 1, Math.floor(cellLuminance * m));
-          foregroundColour = treatment.paletteColors[idx] ?? palette.foreground;
-        } else {
-          foregroundColour = palette.foreground;
-        }
-      }
-
-      rowColors.push(separation ? blendColors(separation.colour, foregroundColour, foregroundMix) : foregroundColour);
+      const readableSource = toReadableColor(displayRed, displayGreen, displayBlue, tone);
+      const sourceLuminance = luminanceFromRgb(red, green, blue) / 255;
+      const foregroundColour = resolveColour([displayRed, displayGreen, displayBlue], sourceLuminance, readableSource);
+      rowColors.push(separation && separationColour ? blendColors(separationColour, foregroundColour, foregroundMix) : foregroundColour);
     }
     lines.push(line);
     colors.push(rowColors);
   }
-
-  const bgConfig = options.backgroundConfig ?? { type: "solid", solidColor: palette.background } as BackgroundConfig;
-
-  return {
-    lines,
-    colors,
-    columns,
-    rows,
-    foreground: palette.foreground,
-    background: bgConfig.type === "solid" ? bgConfig.solidColor : palette.background,
-    backgroundConfig: bgConfig,
-  };
+  const background = options.background ?? solidBackground(palette.background);
+  return { lines, colors, columns, rows, foreground: palette.foreground, background, backgroundColour: backgroundRepresentativeColour(background, palette.background), colourTreatment: treatment };
 };
 
 const BRAILLE_CELL_DENSITY = (field: ToneField, cellX: number, cellY: number) => {
@@ -540,61 +443,3 @@ export async function generateArtFromImage(image: HTMLImageElement, options: Art
   sourceContext.drawImage(image, 0, 0);
   return generateArtFromCanvas(sourceCanvas, options);
 }
-
-export const drawBackgroundOnCanvas = (
-  context: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-  config?: BackgroundConfig,
-  fallbackBackground = "#000000"
-) => {
-  if (!config) {
-    context.fillStyle = fallbackBackground;
-    context.fillRect(0, 0, width, height);
-    return;
-  }
-
-  if (config.type === "transparent") {
-    context.clearRect(0, 0, width, height);
-    return;
-  }
-
-  if (config.type === "solid") {
-    context.fillStyle = config.solidColor;
-    context.fillRect(0, 0, width, height);
-    return;
-  }
-
-  if (config.type === "linear") {
-    const angleRad = (config.gradientAngle * Math.PI) / 180;
-    const halfW = width / 2;
-    const halfH = height / 2;
-    const dist = Math.sqrt(halfW * halfW + halfH * halfH);
-    const startX = halfW - Math.cos(angleRad) * dist * 0.5;
-    const startY = halfH - Math.sin(angleRad) * dist * 0.5;
-    const endX = halfW + Math.cos(angleRad) * dist * 0.5;
-    const endY = halfH + Math.sin(angleRad) * dist * 0.5;
-
-    const grad = context.createLinearGradient(startX, startY, endX, endY);
-    const midpointColor = interpolateColors(config.gradientStart, config.gradientEnd, 0.5);
-    grad.addColorStop(0, config.gradientStart);
-    grad.addColorStop(config.gradientMidpoint, midpointColor);
-    grad.addColorStop(1, config.gradientEnd);
-    context.fillStyle = grad;
-    context.fillRect(0, 0, width, height);
-    return;
-  }
-
-  if (config.type === "radial") {
-    const cx = (config.radialCenterX / 100) * width;
-    const cy = (config.radialCenterY / 100) * height;
-    const maxRadius = Math.max(width, height) * (config.radialSpread / 100);
-
-    const grad = context.createRadialGradient(cx, cy, 0, cx, cy, maxRadius);
-    grad.addColorStop(0, config.radialInner);
-    grad.addColorStop(1, config.radialOuter);
-    context.fillStyle = grad;
-    context.fillRect(0, 0, width, height);
-    return;
-  }
-};
