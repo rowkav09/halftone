@@ -31,6 +31,7 @@ import type { ColourTreatment } from "@/lib/colourTreatment";
 import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatGeneratedTextOutput, generateCustomTextArt } from "@/lib/customText";
 import { DEFAULT_FIGLET_COLOUR_SETTINGS, FIGLET_COLOUR_STYLES, applyFigletColours, getFigletBackground, type FigletColourSettings } from "@/lib/textColour";
 import { ASPECT_PRESETS, type CropPosition, type FitMode } from "@/lib/renderer/sampling";
+import { IMAGE_PRESETS, type ImagePreset } from "@/lib/imagePresets";
 
 const CHARACTER_SET_OPTIONS: Array<{ id: CharacterSetId; label: string; sample: string }> = [
   { id: "ascii", label: "ASCII", sample: "@#%*+=-:." },
@@ -85,14 +86,6 @@ const RESOLUTION_STEP = 4;
 const RESOLUTION_MARKS = [48, 80, 112, 144, 176, 208, 240] as const;
 const USAGE_ENDPOINT = "/api/uses";
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-const IMAGE_PRESETS: Array<{ id: string; name: string; description: string; characterSet: CharacterSetId; dither: DitherAlgorithm; renderMode: RenderMode; invert: boolean; adjustments: ImageAdjustments }> = [
-  { id: "balanced", name: "Balanced", description: "Clean detail with a gentle ordered pattern.", characterSet: "ascii", dither: "bayer4", renderMode: "hybrid", invert: true, adjustments: DEFAULT_IMAGE_ADJUSTMENTS },
-  { id: "detail", name: "Fine detail", description: "More tonal steps with error diffusion.", characterSet: "unicodeFine", dither: "floyd-steinberg", renderMode: "hybrid", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 12, sharpness: 32 } },
-  { id: "ink", name: "Ink", description: "High-contrast blocks for graphic images.", characterSet: "blocks", dither: "bayer4", renderMode: "density", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 30, threshold: 0.42 } },
-  { id: "outline", name: "Outline", description: "Sobel-driven contours and silhouettes.", characterSet: "ascii", dither: "none", renderMode: "edge", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 18, sharpness: 48 } },
-  { id: "terminal", name: "Terminal", description: "Dense Braille cells for compact portraits.", characterSet: "braille", dither: "floyd-steinberg", renderMode: "hybrid", invert: true, adjustments: { ...DEFAULT_IMAGE_ADJUSTMENTS, contrast: 16, gamma: 0.85 } },
-];
 
 const canvasMetrics = (generated: GeneratedArt) => {
   const dense = generated.columns >= 176;
@@ -520,12 +513,24 @@ export default function Home() {
   }, [copyText, resetImageSettings]);
 
   const characterSetDisplay = useMemo(() => characterSet === "custom" ? sanitizeCustomCharacters(customGlyphs) || CHARACTER_SETS.ascii : CHARACTER_SETS[characterSet], [characterSet, customGlyphs]);
-  const applyPreset = (preset: typeof IMAGE_PRESETS[number]) => {
+  const applyPreset = (preset: ImagePreset) => {
+    setResolutionColumns(preset.columns);
     setCharacterSet(preset.characterSet);
     setDitherAlgorithm(preset.dither);
     setRenderMode(preset.renderMode);
     setInvert(preset.invert);
-    setAdjustments(preset.adjustments);
+    setPalette(preset.palette);
+    setColorMode(preset.colorMode);
+    setColorCount(preset.colorCount);
+    setColourTreatment(preset.colourTreatment);
+    setAdjustments({ ...preset.adjustments });
+    setBackgroundSeparation({ ...preset.backgroundSeparation });
+    setImageBackground(preset.background);
+    setAspectFactor(preset.aspectFactor);
+    setFitMode(preset.fitMode);
+    setCropPosition(preset.cropPosition);
+    setGeneratedArt(null);
+    setShowDitherCompare(false);
     setStatus(`${preset.name} preset applied.`);
   };
 
