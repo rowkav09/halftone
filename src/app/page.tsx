@@ -77,6 +77,29 @@ const RESOLUTION_STEP = 4;
 const RESOLUTION_MARKS = [48, 80, 112, 144, 176, 208, 240] as const;
 const USAGE_ENDPOINT = "/api/uses";
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const isHexColor = (value: unknown): value is string => typeof value === "string" && /^#[\da-f]{6}$/iu.test(value);
+
+const parseBackgroundConfig = (raw: string | null): BackgroundConfig | null => {
+  if (!raw) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const value = parsed as Partial<BackgroundConfig>;
+    if (!value.type || !["solid", "linear", "radial", "transparent"].includes(value.type)) return null;
+    const config: BackgroundConfig = { ...DEFAULT_BACKGROUND_CONFIG, ...value, type: value.type };
+    if (!isHexColor(config.solidColor)) config.solidColor = DEFAULT_BACKGROUND_CONFIG.solidColor;
+    if (!isHexColor(config.gradientStart)) config.gradientStart = DEFAULT_BACKGROUND_CONFIG.gradientStart;
+    if (!isHexColor(config.gradientEnd)) config.gradientEnd = DEFAULT_BACKGROUND_CONFIG.gradientEnd;
+    if (!isHexColor(config.radialInner)) config.radialInner = DEFAULT_BACKGROUND_CONFIG.radialInner;
+    if (!isHexColor(config.radialOuter)) config.radialOuter = DEFAULT_BACKGROUND_CONFIG.radialOuter;
+    config.gradientAngle = clampNumber(Number(config.gradientAngle) || DEFAULT_BACKGROUND_CONFIG.gradientAngle, 0, 360);
+    config.gradientMidpoint = clampNumber(Number(config.gradientMidpoint) || DEFAULT_BACKGROUND_CONFIG.gradientMidpoint, 0, 1);
+    config.radialCenterX = clampNumber(Number(config.radialCenterX) || DEFAULT_BACKGROUND_CONFIG.radialCenterX, 0, 100);
+    config.radialCenterY = clampNumber(Number(config.radialCenterY) || DEFAULT_BACKGROUND_CONFIG.radialCenterY, 0, 100);
+    config.radialSpread = clampNumber(Number(config.radialSpread) || DEFAULT_BACKGROUND_CONFIG.radialSpread, 10, 200);
+    return config;
+  } catch { return null; }
+};
 
 type ImagePreset = {
   id: string;
@@ -598,6 +621,8 @@ export default function Home() {
       setColorMode(params.get("colour") === "mono" ? "monochrome" : "colour");
       setColorCount(COLOR_COUNTS.includes(numeric("colors", colorCount) as ColorCount) ? numeric("colors", colorCount) as ColorCount : colorCount);
       setAdjustments({ ...DEFAULT_IMAGE_ADJUSTMENTS, brightness: numeric("bright", 0), contrast: numeric("contrast", 0), gamma: numeric("gamma", 1), saturation: numeric("sat", 1), threshold: numeric("threshold", 0), ditherStrength: numeric("strength", 1), preBlur: numeric("preblur", DEFAULT_IMAGE_ADJUSTMENTS.preBlur), sharpness: numeric("sharp", 0), blur: numeric("blur", 0) });
+      const queryBackgroundConfig = parseBackgroundConfig(params.get("bg"));
+      if (queryBackgroundConfig) setBackgroundConfig(queryBackgroundConfig);
       setBackgroundSeparation((current) => ({
         ...current,
         enabled: params.get("background") === "1",
@@ -631,6 +656,7 @@ export default function Home() {
     params.set("backgroundColour", backgroundSeparation.colour);
     params.set("backgroundThreshold", String(backgroundSeparation.threshold));
     params.set("backgroundSoftness", String(backgroundSeparation.softness));
+    params.set("bg", JSON.stringify(backgroundConfig));
     params.set("bright", String(adjustments.brightness));
     params.set("contrast", String(adjustments.contrast));
     params.set("gamma", String(adjustments.gamma));
@@ -641,7 +667,7 @@ export default function Home() {
     params.set("sharp", String(adjustments.sharpness));
     params.set("blur", String(adjustments.blur));
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, invert, palette, renderMode, resolutionColumns]);
+  }, [adjustments, backgroundConfig, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, invert, palette, renderMode, resolutionColumns]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
