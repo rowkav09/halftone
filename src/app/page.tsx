@@ -8,6 +8,7 @@ import {
   DEFAULT_BACKGROUND_SEPARATION,
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
+  DITHER_METADATA,
   PALETTES,
   RENDER_MODES,
   type ArtOptions,
@@ -62,6 +63,19 @@ const DITHER_LABELS: Record<DitherAlgorithm, string> = {
   atkinson: "Atkinson",
   "sierra-lite": "Sierra Lite",
 };
+
+const DITHER_GROUPS = [
+  { id: "ordered", label: "Ordered" },
+  { id: "diffusion", label: "Error diffusion" },
+  { id: "noise", label: "Noise" },
+] as const;
+
+function DitherOptions() {
+  return <>
+    <option value="none">{DITHER_LABELS.none}</option>
+    {DITHER_GROUPS.map((group) => <optgroup key={group.id} label={group.label}>{DITHER_ALGORITHMS.filter((algorithm) => DITHER_METADATA[algorithm].group === group.id).map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</optgroup>)}
+  </>;
+}
 
 const RENDER_LABELS: Record<RenderMode, string> = { density: "Density", edge: "Edge", "edge-direction": "Directional edges", hybrid: "Hybrid" };
 const RESOLUTION_MIN = 48;
@@ -130,6 +144,8 @@ export default function Home() {
   const fileUrlRef = useRef<string | null>(null);
   const copyTimerRef = useRef<number | null>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
+  const compareButtonRef = useRef<HTMLButtonElement>(null);
+  const compareCloseRef = useRef<HTMLButtonElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const urlHydratedRef = useRef(false);
 
@@ -162,6 +178,10 @@ export default function Home() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [showComparison, setShowComparison] = useState(false);
   const [comparisonPosition, setComparisonPosition] = useState(50);
+  const [showDitherCompare, setShowDitherCompare] = useState(false);
+  const [compareAlgorithms, setCompareAlgorithms] = useState<DitherAlgorithm[]>(["none", "bayer4", "floyd-steinberg", "blue-noise"]);
+  const [comparisonArts, setComparisonArts] = useState<Array<{ algorithm: DitherAlgorithm; art: GeneratedArt }>>([]);
+  const [isComparing, setIsComparing] = useState(false);
 
   const activeTextStyle = CUSTOM_TEXT_STYLES[textStyleIndex] ?? CUSTOM_TEXT_STYLES[0];
   const activePalette = useMemo(() => PALETTES.find((option) => option.id === palette) ?? PALETTES[0], [palette]);
@@ -172,6 +192,7 @@ export default function Home() {
   const textBackground = useMemo(() => getFigletBackground(figletColourSettings), [figletColourSettings]);
   const exportName = mode === "text" ? textValue.trim().toLowerCase().replace(/\s+/g, "-") || "text-art" : "halftone";
   const previewAspect = useMemo(() => generatedArt ? canvasMetrics(generatedArt).width / canvasMetrics(generatedArt).height : 1.5, [generatedArt]);
+  const currentImageOptions = useMemo<ArtOptions>(() => ({ columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, colourTreatment, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, background: imageBackground }), [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, colourTreatment, customGlyphs, ditherAlgorithm, imageBackground, invert, palette, renderMode, resolutionColumns]);
 
   const incrementUsage = useCallback(async () => {
     try {
@@ -218,7 +239,7 @@ export default function Home() {
     if (!activeTextStyle) return;
     setIsRendering(true);
     try {
-      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, colourTreatment, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, background: mode === "image" ? imageBackground : undefined };
+      const options: ArtOptions = { ...currentImageOptions, background: mode === "image" ? imageBackground : undefined };
       const generated = mode === "text" ? generateCustomTextArt(textValue, activeTextStyle) : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setGeneratedArt(generated);
       if (mode === "image") drawGeneratedArt(generated);
@@ -227,7 +248,23 @@ export default function Home() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
     } finally { setIsRendering(false); }
-  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, colourTreatment, customGlyphs, ditherAlgorithm, drawGeneratedArt, imageBackground, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
+  }, [activeTextStyle, currentImageOptions, drawGeneratedArt, imageBackground, incrementUsage, mode, textValue]);
+
+  const renderDitherComparison = useCallback(async () => {
+    if (!imageRef.current || !compareAlgorithms.length) return;
+    setIsComparing(true);
+    try {
+      const variants = await Promise.all(compareAlgorithms.map(async (algorithm) => ({
+        algorithm,
+        art: await generateArtFromImage(imageRef.current as HTMLImageElement, { ...currentImageOptions, ditherAlgorithm: algorithm }),
+      })));
+      setComparisonArts(variants);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not render the dither comparison.");
+    } finally {
+      setIsComparing(false);
+    }
+  }, [compareAlgorithms, currentImageOptions]);
 
   const updateAdjustment = useCallback((key: keyof ImageAdjustments, value: number) => setAdjustments((current) => ({ ...current, [key]: value })), []);
 
@@ -304,6 +341,20 @@ export default function Home() {
     const timer = window.setTimeout(() => void renderArt(), 80);
     return () => window.clearTimeout(timer);
   }, [imageReady, mode, renderArt]);
+
+  useEffect(() => {
+    if (showDitherCompare) void renderDitherComparison();
+  }, [renderDitherComparison, showDitherCompare]);
+
+  useEffect(() => {
+    if (!showDitherCompare) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowDitherCompare(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    compareCloseRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showDitherCompare]);
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
@@ -509,7 +560,7 @@ export default function Home() {
           <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Export</h2><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Text wrapper<select value={textOutputFormat} onChange={(event) => setTextOutputFormat(event.target.value as TextOutputFormat["id"])} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{TEXT_OUTPUT_FORMATS.map((format) => <option key={format.id} value={format.id}>{format.name}</option>)}</select></label><p className="text-xs text-slate-500">The wrapper affects text previews, copied text, and TXT exports.</p><div className="grid grid-cols-2 gap-2"><button type="button" disabled={!artLines.length} onClick={() => void copyText()} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">{copyState === "copied" ? "Copied" : copyState === "failed" ? "Copy failed" : "Copy text"}</button><button type="button" disabled={!artLines.length} onClick={exportText} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">TXT</button>{mode === "image" ? <button type="button" disabled={!artLines.length} onClick={exportPng} className="rounded-sm bg-emerald-300 px-3 py-2 text-sm font-semibold text-black transition hover:bg-emerald-200 disabled:opacity-40">PNG</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.svg`, generateSvgExport(displayArt), "image/svg+xml;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">SVG</button><button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.html`, generateHtmlExport(displayArt, mode === "text" ? textHtmlOptions : undefined), "text/html;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">HTML</button>{mode === "text" ? <button type="button" disabled={!displayArt} onClick={() => void copyHtml()} className="rounded-sm border border-emerald-300/30 px-3 py-2 text-sm text-emerald-100 transition hover:bg-emerald-300/10 disabled:opacity-40">{htmlCopyState === "copied" ? "HTML copied" : htmlCopyState === "failed" ? "HTML failed" : "Copy HTML"}</button> : null}<button type="button" disabled={!displayArt} onClick={() => displayArt && download(`${exportName}.ansi`, generateAnsiExport(displayArt), "text/plain;charset=utf-8")} className="rounded-sm border border-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/10 disabled:opacity-40">ANSI</button></div><p className="text-xs text-slate-500">HTML, SVG, and ANSI retain the displayed per-character colour.</p></div>
 
           {mode === "image" ? <>
-          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{DITHER_ALGORITHMS.map((algorithm) => <option key={algorithm} value={algorithm}>{DITHER_LABELS[algorithm]}</option>)}</select></label><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
+          <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-center justify-between"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Renderer</h2><button type="button" title="Copy this configuration from the address bar" onClick={() => { void navigator.clipboard.writeText(window.location.href); setStatus("Shareable settings URL copied."); }} className="text-[10px] uppercase tracking-[0.18em] text-emerald-200 transition hover:text-emerald-100">Copy link</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Dithering<select aria-label="Dithering" value={ditherAlgorithm} onChange={(event) => setDitherAlgorithm(event.target.value as DitherAlgorithm)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40"><DitherOptions /></select></label><p aria-live="polite" className="mt-1 text-xs text-slate-500">{DITHER_METADATA[ditherAlgorithm].description}</p><div className="flex items-center justify-between gap-2"><span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Diagnostic view</span><button ref={compareButtonRef} type="button" disabled={!imageReady} onClick={() => setShowDitherCompare(true)} className="rounded-sm border border-emerald-300/30 px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-300/10 disabled:opacity-40">Dither compare</button></div><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Render mode<select value={renderMode} onChange={(event) => setRenderMode(event.target.value as RenderMode)} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{RENDER_MODES.map((renderOption) => <option key={renderOption} value={renderOption}>{RENDER_LABELS[renderOption]}</option>)}</select></label><div className="flex items-center justify-between border-t border-white/[0.07] pt-3"><div><h3 className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Invert</h3><p className="mt-1 text-xs text-slate-500">Dark/light swap</p></div><button type="button" onClick={() => setInvert((value) => !value)} className={`h-7 w-12 rounded-sm border transition ${invert ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Invert output" aria-pressed={invert}><span className={`block h-4 w-4 rounded-sm bg-white transition ${invert ? "translate-x-6" : "translate-x-1"}`} /></button></div></div>
 
           {mode === "image" ? <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Image controls</h2><RangeControl label="Brightness" value={adjustments.brightness} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("brightness", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Contrast" value={adjustments.contrast} min={-100} max={100} step={1} onChange={(value) => updateAdjustment("contrast", value)} format={(value) => `${value > 0 ? "+" : ""}${value}`} /><RangeControl label="Gamma" value={adjustments.gamma} min={0.4} max={2.5} step={0.05} onChange={(value) => updateAdjustment("gamma", value)} format={(value) => value.toFixed(2)} /><RangeControl label="Saturation" value={adjustments.saturation} min={0} max={2} step={0.05} onChange={(value) => updateAdjustment("saturation", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Threshold" value={adjustments.threshold} min={0} max={0.95} step={0.05} onChange={(value) => updateAdjustment("threshold", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Tone levels" value={adjustments.toneLevels} min={0} max={16} step={1} onChange={(value) => updateAdjustment("toneLevels", value)} format={(value) => value < 2 ? "Auto" : String(value)} /><RangeControl label="Dither strength" value={adjustments.ditherStrength} min={0} max={1} step={0.05} onChange={(value) => updateAdjustment("ditherStrength", value)} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Pre-filter" value={adjustments.preBlur} min={0} max={0.75} step={0.05} onChange={(value) => updateAdjustment("preBlur", value)} format={(value) => value === 0 ? "Off" : `${Math.round(value * 100)}%`} /><RangeControl label="Sharpness" value={adjustments.sharpness} min={0} max={100} step={1} onChange={(value) => updateAdjustment("sharpness", value)} suffix="%" /><RangeControl label="Blur" value={adjustments.blur} min={0} max={4} step={0.25} onChange={(value) => updateAdjustment("blur", value)} format={(value) => value === 0 ? "Off" : value.toFixed(2)} /></div> : null}
 
@@ -519,5 +570,22 @@ export default function Home() {
         </aside>
       </div>
     </div>
+    {showDitherCompare ? <div role="dialog" aria-modal="true" aria-labelledby="dither-compare-title" className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) { setShowDitherCompare(false); compareButtonRef.current?.focus(); } }}>
+      <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-md border border-white/15 bg-slate-950 shadow-2xl">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2">
+          <div><h2 id="dither-compare-title" className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Dither compare</h2><p className="mt-1 text-xs text-slate-500">Same image and settings, varied only by algorithm.</p></div>
+          <button ref={compareCloseRef} type="button" onClick={() => { setShowDitherCompare(false); compareButtonRef.current?.focus(); }} className="rounded-sm border border-white/10 px-2 py-1 text-xs text-slate-300 transition hover:bg-white/10">Close</button>
+        </div>
+        <div className="grid min-h-0 grid-cols-1 gap-2 overflow-auto p-3 sm:grid-cols-2">
+          {compareAlgorithms.map((algorithm, index) => {
+            const variant = comparisonArts.find((item) => item.algorithm === algorithm)?.art;
+            return <div key={`${index}-${algorithm}`} className="min-w-0 rounded-sm border border-white/10 bg-black/50 p-2">
+              <div className="mb-2 flex items-center justify-between gap-2"><label className="min-w-0 flex-1 text-[10px] uppercase tracking-[0.18em] text-slate-500">Slot {index + 1}<select aria-label={`Dither compare slot ${index + 1}`} value={algorithm} onChange={(event) => setCompareAlgorithms((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value as DitherAlgorithm : item))} className="mt-1 w-full rounded-sm border border-white/10 bg-black px-2 py-1 text-xs normal-case tracking-normal text-white"><DitherOptions /></select></label><span className="pt-4 text-right text-[10px] text-emerald-200">{DITHER_LABELS[algorithm]}</span></div>
+              {variant ? <pre className="max-h-[48vh] overflow-auto rounded-sm border border-white/10 p-2 font-mono text-[7px] leading-[1.1] text-slate-100 sm:text-[9px]">{variant.lines.map((line, row) => <Fragment key={`${row}-${line}`}><ColouredFigletLine line={line} colors={variant.colors[row] ?? []} fallback={variant.foreground} row={row} />{row < variant.lines.length - 1 ? "\n" : null}</Fragment>)}</pre> : <div className="flex min-h-32 items-center justify-center rounded-sm border border-white/10 text-xs text-slate-500">{isComparing ? "Rendering…" : "No preview"}</div>}
+            </div>;
+          })}
+        </div>
+      </div>
+    </div> : null}
   </main>;
 }

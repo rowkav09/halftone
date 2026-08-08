@@ -8,6 +8,7 @@ import { createColourTreatmentResolver, type ColourTreatment } from "@/lib/colou
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
+  DITHER_METADATA,
   RENDER_MODES,
   type DitherAlgorithm,
   type ImageAdjustments,
@@ -84,7 +85,7 @@ export type GeneratedArt = {
   colourTreatment: ColourTreatment;
 };
 
-export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, RENDER_MODES };
+export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, DITHER_METADATA, RENDER_MODES };
 export type { DitherAlgorithm, ImageAdjustments, RenderMode };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
