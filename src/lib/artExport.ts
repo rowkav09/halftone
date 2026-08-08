@@ -11,6 +11,16 @@ const hexToRgb = (value: string) => {
   return [Number.parseInt(match[1] ?? "e8", 16), Number.parseInt(match[2] ?? "ed", 16), Number.parseInt(match[3] ?? "f2", 16)] as const;
 };
 
+const interpolateColors = (c1: string, c2: string, ratio: number): string => {
+  const [r1, g1, b1] = hexToRgb(c1);
+  const [r2, g2, b2] = hexToRgb(c2);
+  const r = Math.round(r1 + (r2 - r1) * ratio);
+  const g = Math.round(g1 + (g2 - g1) * ratio);
+  const b = Math.round(b1 + (b2 - b1) * ratio);
+  const toHex = (c: number) => c.toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+};
+
 const colouredRuns = (line: string, colors: string[], fallback: string) => {
   const runs: Array<{ text: string; color: string }> = [];
   Array.from(line).forEach((glyph, index) => {
@@ -57,7 +67,8 @@ export const getBackgroundCss = (config?: BackgroundConfig, fallbackSolid = "#00
   if (config.type === "transparent") return "background:transparent;";
   if (config.type === "solid") return `background:${config.solidColor};`;
   if (config.type === "linear") {
-    return `background:linear-gradient(${config.gradientAngle}deg, ${config.gradientStart} 0%, ${config.gradientEnd} 100%);`;
+    const midpointColor = interpolateColors(config.gradientStart, config.gradientEnd, 0.5);
+    return `background:linear-gradient(${config.gradientAngle}deg, ${config.gradientStart} 0%, ${midpointColor} ${config.gradientMidpoint * 100}%, ${config.gradientEnd} 100%);`;
   }
   if (config.type === "radial") {
     return `background:radial-gradient(circle at ${config.radialCenterX}% ${config.radialCenterY}%, ${config.radialInner} 0%, ${config.radialOuter} ${config.radialSpread}%);`;
@@ -78,10 +89,10 @@ export const generateHtmlExport = (art: GeneratedArt, options: HtmlExportOptions
 const angleToCoordinates = (angle: number) => {
   const angleRad = (angle * Math.PI) / 180;
   // Map angle to SVG coordinates (0% to 100%)
-  const x1 = Math.round(50 - Math.cos(angleRad) * 50);
-  const y1 = Math.round(50 - Math.sin(angleRad) * 50);
-  const x2 = Math.round(50 + Math.cos(angleRad) * 50);
-  const y2 = Math.round(50 + Math.sin(angleRad) * 50);
+  const x1 = Math.round(50 - Math.sin(angleRad) * 50);
+  const y1 = Math.round(50 + Math.cos(angleRad) * 50);
+  const x2 = Math.round(50 + Math.sin(angleRad) * 50);
+  const y2 = Math.round(50 - Math.cos(angleRad) * 50);
   return { x1, y1, x2, y2 };
 };
 
@@ -112,10 +123,12 @@ export const generateSvgExport = (art: GeneratedArt) => {
       bgFill = `fill="${config.solidColor}"`;
     } else if (config.type === "linear") {
       const coords = angleToCoordinates(config.gradientAngle);
+      const midpointColor = interpolateColors(config.gradientStart, config.gradientEnd, 0.5);
       bgDefs = `
   <defs>
     <linearGradient id="bg-grad" x1="${coords.x1}%" y1="${coords.y1}%" x2="${coords.x2}%" y2="${coords.y2}%">
       <stop offset="0%" stop-color="${config.gradientStart}" />
+      <stop offset="${config.gradientMidpoint * 100}%" stop-color="${midpointColor}" />
       <stop offset="100%" stop-color="${config.gradientEnd}" />
     </linearGradient>
   </defs>`;

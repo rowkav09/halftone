@@ -548,7 +548,13 @@ export const drawBackgroundOnCanvas = (
   config?: BackgroundConfig,
   fallbackBackground = "#000000"
 ) => {
-  if (!config || config.type === "transparent") {
+  if (!config) {
+    context.fillStyle = fallbackBackground;
+    context.fillRect(0, 0, width, height);
+    return;
+  }
+
+  if (config.type === "transparent") {
     context.clearRect(0, 0, width, height);
     return;
   }
@@ -570,7 +576,7 @@ export const drawBackgroundOnCanvas = (
     const endY = halfH + Math.sin(angleRad) * dist * 0.5;
 
     const grad = context.createLinearGradient(startX, startY, endX, endY);
-    const midpointColor = interpolateColors(config.gradientStart, config.gradientEnd, config.gradientMidpoint);
+    const midpointColor = interpolateColors(config.gradientStart, config.gradientEnd, 0.5);
     grad.addColorStop(0, config.gradientStart);
     grad.addColorStop(config.gradientMidpoint, midpointColor);
     grad.addColorStop(1, config.gradientEnd);
