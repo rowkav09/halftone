@@ -2,6 +2,8 @@ import { applyDither } from "@/lib/renderer/dithering";
 import { brailleGlyphAt, edgeDirectionGlyphForTone, glyphForTone, orderGlyphsByDensity, textureGlyphForTone } from "@/lib/renderer/glyphs";
 import { adjustImageData, combineToneAndEdges, sobelEdgeDetails } from "@/lib/renderer/processing";
 import { applyToneCurve } from "@/lib/renderer/tone";
+import { backgroundRepresentativeColour, type Background, solidBackground } from "@/lib/background";
+import { interpolateColour, isHexColour, rgbToHex, type Rgb } from "@/lib/colour";
 import {
   DEFAULT_IMAGE_ADJUSTMENTS,
   DITHER_ALGORITHMS,
@@ -9,7 +11,6 @@ import {
   type DitherAlgorithm,
   type ImageAdjustments,
   type RenderMode,
-  type Rgb,
   type ToneField,
 } from "@/lib/renderer/types";
 
@@ -67,6 +68,7 @@ export type ArtOptions = {
   renderMode?: RenderMode;
   adjustments?: Partial<ImageAdjustments>;
   backgroundSeparation?: BackgroundSeparationOptions;
+  background?: Background;
 };
 
 export type GeneratedArt = {
@@ -75,7 +77,8 @@ export type GeneratedArt = {
   columns: number;
   rows: number;
   foreground: string;
-  background: string;
+  background: Background;
+  backgroundColour: string;
 };
 
 export { DEFAULT_IMAGE_ADJUSTMENTS, DITHER_ALGORITHMS, RENDER_MODES };
@@ -95,21 +98,11 @@ export const getCharactersForSet = (characterSet: CharacterSetId, customText: st
 
 const getPalette = (palette: PaletteId) => PALETTES.find((option) => option.id === palette) ?? PALETTES[0];
 
-const toHexColor = (red: number, green: number, blue: number) => {
-  const componentToHex = (component: number) => Math.round(clamp(component, 0, 255)).toString(16).padStart(2, "0");
-  return `#${componentToHex(red)}${componentToHex(green)}${componentToHex(blue)}`;
-};
-
-const fromHexColor = (color: string): Rgb | null => {
-  const match = /^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/iu.exec(color);
-  return match ? [Number.parseInt(match[1] ?? "00", 16), Number.parseInt(match[2] ?? "00", 16), Number.parseInt(match[3] ?? "00", 16)] : null;
-};
-
 const blendColors = (background: string, foreground: string, mix: number) => {
-  const from = fromHexColor(background);
-  const to = fromHexColor(foreground);
-  if (!from || !to) return foreground;
-  return toHexColor(
+  if (!isHexColour(background) || !isHexColour(foreground)) return foreground;
+  const from = [Number.parseInt(background.slice(1, 3), 16), Number.parseInt(background.slice(3, 5), 16), Number.parseInt(background.slice(5, 7), 16)] as const;
+  const to = [Number.parseInt(foreground.slice(1, 3), 16), Number.parseInt(foreground.slice(3, 5), 16), Number.parseInt(foreground.slice(5, 7), 16)] as const;
+  return rgbToHex(
     from[0] + (to[0] - from[0]) * mix,
     from[1] + (to[1] - from[1]) * mix,
     from[2] + (to[2] - from[2]) * mix,
@@ -119,7 +112,7 @@ const blendColors = (background: string, foreground: string, mix: number) => {
 // Dark source pixels still need enough light to be legible on the black canvas.
 const toReadableColor = (red: number, green: number, blue: number, tone: number) => {
   const lift = 0.32 + 0.5 * clamp(tone, 0, 1);
-  return toHexColor(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
+  return rgbToHex(red + (235 - red) * lift, green + (242 - green) * lift, blue + (255 - blue) * lift);
 };
 
 const squaredDistance = (first: Rgb, second: Rgb) => {
@@ -393,7 +386,8 @@ export const generateArtFromCanvas = (sourceCanvas: HTMLCanvasElement, options: 
     lines.push(line);
     colors.push(rowColors);
   }
-  return { lines, colors, columns, rows, foreground: palette.foreground, background: palette.background };
+  const background = options.background ?? solidBackground(palette.background);
+  return { lines, colors, columns, rows, foreground: palette.foreground, background, backgroundColour: backgroundRepresentativeColour(background, palette.background) };
 };
 
 const BRAILLE_CELL_DENSITY = (field: ToneField, cellX: number, cellY: number) => {

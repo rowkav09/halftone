@@ -25,6 +25,7 @@ import {
   sanitizeCustomCharacters,
 } from "@/lib/art";
 import { generateAnsiExport, generateHtmlExport, generateSvgExport } from "@/lib/artExport";
+import { paintBackground, parseBackgroundColour, type Background } from "@/lib/background";
 import { CUSTOM_TEXT_STYLES, TEXT_OUTPUT_FORMATS, type TextOutputFormat, formatGeneratedTextOutput, generateCustomTextArt } from "@/lib/customText";
 import { DEFAULT_FIGLET_COLOUR_SETTINGS, FIGLET_COLOUR_STYLES, applyFigletColours, getFigletBackground, type FigletColourSettings } from "@/lib/textColour";
 
@@ -148,6 +149,7 @@ export default function Home() {
   const [renderMode, setRenderMode] = useState<RenderMode>("density");
   const [adjustments, setAdjustments] = useState<ImageAdjustments>(DEFAULT_IMAGE_ADJUSTMENTS);
   const [backgroundSeparation, setBackgroundSeparation] = useState<BackgroundSeparationOptions>(DEFAULT_BACKGROUND_SEPARATION);
+  const [imageBackground, setImageBackground] = useState<Background>({ kind: "solid", colour: "#070b14" });
   const [renderCount, setRenderCount] = useState(0);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const [htmlCopyState, setHtmlCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -200,8 +202,7 @@ export default function Home() {
     const metrics = canvasMetrics(generated);
     canvas.width = metrics.width;
     canvas.height = metrics.height;
-    context.fillStyle = generated.background;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    paintBackground(context, canvas.width, canvas.height, generated.background);
     context.font = `${metrics.fontSize}px var(--font-mono), ui-monospace, monospace`;
     context.textBaseline = "top";
     generated.lines.forEach((line, row) => Array.from(line).forEach((glyph, column) => {
@@ -215,7 +216,7 @@ export default function Home() {
     if (!activeTextStyle) return;
     setIsRendering(true);
     try {
-      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation };
+      const options: ArtOptions = { columns: resolutionColumns, characterSet, customText: customGlyphs, invert, palette, colorMode, colorCount, ditherAlgorithm, renderMode, adjustments, backgroundSeparation, background: mode === "image" ? imageBackground : undefined };
       const generated = mode === "text" ? generateCustomTextArt(textValue, activeTextStyle) : await generateArtFromImage(imageRef.current as HTMLImageElement, options);
       setGeneratedArt(generated);
       if (mode === "image") drawGeneratedArt(generated);
@@ -224,7 +225,7 @@ export default function Home() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Failed to render the preview.");
     } finally { setIsRendering(false); }
-  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
+  }, [activeTextStyle, adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, drawGeneratedArt, imageBackground, incrementUsage, invert, mode, palette, renderMode, resolutionColumns, textValue]);
 
   const updateAdjustment = useCallback((key: keyof ImageAdjustments, value: number) => setAdjustments((current) => ({ ...current, [key]: value })), []);
 
@@ -239,6 +240,7 @@ export default function Home() {
     setRenderMode("density");
     setAdjustments(DEFAULT_IMAGE_ADJUSTMENTS);
     setBackgroundSeparation(DEFAULT_BACKGROUND_SEPARATION);
+    setImageBackground({ kind: "solid", colour: "#070b14" });
     setStatus("Image settings reset to the accuracy-first default.");
   }, []);
 
@@ -253,7 +255,10 @@ export default function Home() {
 
   const selectImageColour = useCallback((nextMode: ColorMode, nextPalette?: PaletteId) => {
     setColorMode(nextMode);
-    if (nextPalette) setPalette(nextPalette);
+    if (nextPalette) {
+      setPalette(nextPalette);
+      setImageBackground((current) => current.kind === "solid" ? { kind: "solid", colour: PALETTES.find((option) => option.id === nextPalette)?.background ?? current.colour } : current);
+    }
     // Do not leave a previously rendered colour treatment on screen while the
     // live renderer replaces it with the newly selected treatment.
     setGeneratedArt(null);
@@ -341,6 +346,7 @@ export default function Home() {
       const queryMode = params.get("render") as RenderMode | null;
       const queryPalette = params.get("palette") as PaletteId | null;
       const queryBackgroundSet = params.get("backgroundSet") as BackgroundCharacterSetId | null;
+      const queryBackgroundType = params.get("backgroundType");
       const queryGlyphs = params.get("glyphs");
       if (queryCharacterSet && (queryCharacterSet === "custom" || queryCharacterSet in CHARACTER_SETS)) setCharacterSet(queryCharacterSet);
       if (queryGlyphs !== null) setCustomGlyphs(queryGlyphs);
@@ -362,6 +368,12 @@ export default function Home() {
         threshold: clampNumber(numeric("backgroundThreshold", current.threshold), 0.05, 0.95),
         softness: clampNumber(numeric("backgroundSoftness", current.softness), 0.02, 0.45),
       }));
+      const startColour = parseBackgroundColour(params.get("backgroundStart"), "#070b14");
+      const endColour = parseBackgroundColour(params.get("backgroundEnd"), "#070b14");
+      if (queryBackgroundType === "transparent") setImageBackground({ kind: "transparent" });
+      else if (queryBackgroundType === "linear") setImageBackground({ kind: "linear", startColour, endColour, angle: numeric("backgroundAngle", 0) });
+      else if (queryBackgroundType === "radial") setImageBackground({ kind: "radial", innerColour: startColour, outerColour: endColour, centerX: numeric("backgroundX", 0.5), centerY: numeric("backgroundY", 0.5), spread: numeric("backgroundSpread", 1) });
+      else setImageBackground({ kind: "solid", colour: parseBackgroundColour(params.get("backgroundColour"), "#070b14") });
       urlHydratedRef.current = true;
     };
     const timer = window.setTimeout(hydrate, 0);
@@ -388,6 +400,20 @@ export default function Home() {
     params.set("backgroundColour", backgroundSeparation.colour);
     params.set("backgroundThreshold", String(backgroundSeparation.threshold));
     params.set("backgroundSoftness", String(backgroundSeparation.softness));
+    params.set("backgroundType", imageBackground.kind);
+    if (imageBackground.kind === "solid") params.set("backgroundColour", imageBackground.colour);
+    if (imageBackground.kind === "linear") {
+      params.set("backgroundStart", imageBackground.startColour);
+      params.set("backgroundEnd", imageBackground.endColour);
+      params.set("backgroundAngle", String(imageBackground.angle));
+    }
+    if (imageBackground.kind === "radial") {
+      params.set("backgroundStart", imageBackground.innerColour);
+      params.set("backgroundEnd", imageBackground.outerColour);
+      params.set("backgroundX", String(imageBackground.centerX));
+      params.set("backgroundY", String(imageBackground.centerY));
+      params.set("backgroundSpread", String(imageBackground.spread));
+    }
     params.set("bright", String(adjustments.brightness));
     params.set("contrast", String(adjustments.contrast));
     params.set("gamma", String(adjustments.gamma));
@@ -399,7 +425,7 @@ export default function Home() {
     params.set("sharp", String(adjustments.sharpness));
     params.set("blur", String(adjustments.blur));
     window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
-  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, invert, palette, renderMode, resolutionColumns]);
+  }, [adjustments, backgroundSeparation, characterSet, colorCount, colorMode, customGlyphs, ditherAlgorithm, imageBackground, invert, palette, renderMode, resolutionColumns]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -454,6 +480,7 @@ export default function Home() {
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Presets</h2><div className="grid gap-1.5">{IMAGE_PRESETS.map((preset) => <button key={preset.id} type="button" title={preset.description} onClick={() => applyPreset(preset)} className="rounded-sm border border-white/10 px-3 py-2 text-left transition hover:-translate-y-px hover:border-emerald-300/40 hover:bg-emerald-300/10 active:translate-y-0"><span className="block text-sm text-white">{preset.name}</span><span className="block text-[10px] text-slate-500">{preset.description}</span></button>)}</div></div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Character set</h2><select value={characterSet} onChange={(event) => setCharacterSet(event.target.value as CharacterSetId)} className="w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/40">{CHARACTER_SET_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select><p className="font-mono text-[10px] text-slate-500">{CHARACTER_SET_OPTIONS.find((option) => option.id === characterSet)?.sample}</p>{characterSet === "custom" ? <textarea value={customGlyphs} onChange={(event) => setCustomGlyphs(event.target.value)} rows={2} className="w-full rounded-sm border border-white/10 bg-black/70 px-3 py-2 font-mono text-sm text-white outline-none focus:border-emerald-300/40" placeholder="@#%" /> : null}<p className="text-xs text-slate-500">Generic and custom sets are ordered by measured glyph density.</p></div>
             <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex items-start justify-between gap-3"><div><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Foreground / background</h2><p className="mt-1 text-xs text-slate-500">Keep the subject detailed while the background becomes quieter.</p></div><button type="button" onClick={() => setBackgroundSeparation((current) => ({ ...current, enabled: !current.enabled }))} className={`h-7 w-12 shrink-0 rounded-sm border transition ${backgroundSeparation.enabled ? "border-emerald-300/40 bg-emerald-300/20" : "border-white/10 bg-white/10"}`} aria-label="Separate foreground and background" aria-pressed={backgroundSeparation.enabled}><span className={`block h-4 w-4 rounded-sm bg-white transition ${backgroundSeparation.enabled ? "translate-x-6" : "translate-x-1"}`} /></button></div>{backgroundSeparation.enabled ? <div className="space-y-3 border-t border-white/[0.07] pt-3"><label className="block text-[10px] uppercase tracking-[0.2em] text-slate-500">Background glyphs<select value={backgroundSeparation.characterSet} onChange={(event) => setBackgroundSeparation((current) => ({ ...current, characterSet: event.target.value as BackgroundCharacterSetId }))} className="mt-2 w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm normal-case tracking-normal text-white outline-none focus:border-emerald-300/40">{BACKGROUND_CHARACTER_SET_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label><label className="flex items-center justify-between text-xs text-slate-300"><span>Background tint</span><input aria-label="Background tint" type="color" value={backgroundSeparation.colour} onChange={(event) => setBackgroundSeparation((current) => ({ ...current, colour: event.target.value }))} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label><RangeControl label="Subject separation" value={backgroundSeparation.threshold} min={0.05} max={0.95} step={0.05} onChange={(value) => setBackgroundSeparation((current) => ({ ...current, threshold: value }))} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Edge blend" value={backgroundSeparation.softness} min={0.02} max={0.45} step={0.01} onChange={(value) => setBackgroundSeparation((current) => ({ ...current, softness: value }))} format={(value) => `${Math.round(value * 100)}%`} /></div> : null}</div>
+            <div className="space-y-3 rounded-md border border-white/10 bg-black/40 p-3"><h2 className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Background</h2><select aria-label="Image background type" value={imageBackground.kind} onChange={(event) => { const kind = event.target.value as Background["kind"]; setImageBackground(kind === "transparent" ? { kind } : kind === "solid" ? { kind, colour: activePalette.background } : kind === "linear" ? { kind, startColour: activePalette.background, endColour: "#243b53", angle: 0 } : { kind, innerColour: activePalette.background, outerColour: "#000000", centerX: 0.5, centerY: 0.5, spread: 1 }); }} className="w-full rounded-sm border border-white/10 bg-black px-3 py-2 text-sm text-white outline-none focus:border-emerald-300/40"><option value="solid">Solid</option><option value="linear">Linear gradient</option><option value="radial">Radial gradient</option><option value="transparent">Transparent</option></select>{imageBackground.kind === "solid" ? <label className="flex items-center justify-between text-xs text-slate-300"><span>Colour</span><input aria-label="Background colour" type="color" value={imageBackground.colour} onChange={(event) => setImageBackground({ kind: "solid", colour: event.target.value })} className="h-8 w-10 rounded-sm border border-white/10 bg-black p-1" /></label> : null}{imageBackground.kind === "linear" ? <><div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">Start<input aria-label="Background gradient start" type="color" value={imageBackground.startColour} onChange={(event) => setImageBackground({ ...imageBackground, startColour: event.target.value })} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">End<input aria-label="Background gradient end" type="color" value={imageBackground.endColour} onChange={(event) => setImageBackground({ ...imageBackground, endColour: event.target.value })} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div><label className="block text-xs text-slate-300">Angle<select aria-label="Background gradient angle" value={imageBackground.angle} onChange={(event) => setImageBackground({ ...imageBackground, angle: Number(event.target.value) })} className="mt-1 w-full rounded-sm border border-white/10 bg-black px-2 py-1 text-sm"><option value={0}>Horizontal</option><option value={90}>Vertical</option><option value={45}>Diagonal down-right</option><option value={315}>Diagonal up-right</option></select></label></> : null}{imageBackground.kind === "radial" ? <><div className="grid grid-cols-2 gap-2"><label className="text-xs text-slate-300">Inner<input aria-label="Radial inner colour" type="color" value={imageBackground.innerColour} onChange={(event) => setImageBackground({ ...imageBackground, innerColour: event.target.value })} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label><label className="text-xs text-slate-300">Outer<input aria-label="Radial outer colour" type="color" value={imageBackground.outerColour} onChange={(event) => setImageBackground({ ...imageBackground, outerColour: event.target.value })} className="mt-1 h-8 w-full rounded-sm border border-white/10 bg-black p-1" /></label></div><RangeControl label="Centre X" value={imageBackground.centerX} min={0} max={1} step={0.05} onChange={(value) => setImageBackground({ ...imageBackground, centerX: value })} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Centre Y" value={imageBackground.centerY} min={0} max={1} step={0.05} onChange={(value) => setImageBackground({ ...imageBackground, centerY: value })} format={(value) => `${Math.round(value * 100)}%`} /><RangeControl label="Spread" value={imageBackground.spread} min={0.25} max={2} step={0.05} onChange={(value) => setImageBackground({ ...imageBackground, spread: value })} format={(value) => `${Math.round(value * 100)}%`} /></> : null}</div>
             <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3"><div className="flex justify-between text-[10px] uppercase tracking-[0.3em] text-slate-500"><span>Resolution</span><span>{resolutionColumns} columns</span></div><div className="relative"><input type="range" min={RESOLUTION_MIN} max={RESOLUTION_MAX} step={RESOLUTION_STEP} value={resolutionColumns} onChange={(event) => setResolutionColumns(Number(event.target.value))} className="h-2 w-full accent-emerald-300" /><div aria-hidden className="pointer-events-none absolute inset-x-1 top-1/2 flex -translate-y-1/2 justify-between">{RESOLUTION_MARKS.map((mark) => <span key={mark} className={`h-1.5 w-1.5 rounded-sm ${resolutionColumns >= mark ? "bg-emerald-200" : "bg-slate-600"}`} />)}</div></div><div className="flex justify-between text-[9px] uppercase text-slate-500">{RESOLUTION_MARKS.map((mark) => <span key={mark}>{mark}</span>)}</div></div>
             <button type="button" onClick={resetImageSettings} className="w-full rounded-sm border border-white/10 px-3 py-2 text-sm text-slate-200 transition hover:-translate-y-px hover:border-white/30 hover:bg-white/10 active:translate-y-0">Reset image settings <span className="text-slate-500">R</span></button>
           </> : null}
