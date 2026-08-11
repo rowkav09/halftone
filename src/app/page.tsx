@@ -424,6 +424,19 @@ export default function Home() {
     image.src = url;
   }, []);
 
+  const removeImage = useCallback(() => {
+    loadRequestRef.current += 1;
+    if (fileUrlRef.current) URL.revokeObjectURL(fileUrlRef.current);
+    fileUrlRef.current = null;
+    imageRef.current = null;
+    setLoadedImage(null);
+    setImageUrl(null);
+    setImageReady(false);
+    setGeneratedArt(null);
+    setShowComparison(false);
+    setStatus("Image removed. Choose another image or switch to text.");
+  }, []);
+
   const drawGeneratedArt = useCallback((generated: GeneratedArt) => {
     const canvas = previewCanvasRef.current;
     const context = canvas?.getContext("2d");
@@ -730,7 +743,7 @@ export default function Home() {
         <section className="space-y-3 rounded-md border border-white/10 bg-white/[0.03] p-3 backdrop-blur-sm lg:h-full lg:min-h-0 lg:overflow-y-auto">
           <div className={`rounded-md border border-dashed p-3 transition ${isDragging ? "border-emerald-300 bg-emerald-300/10" : "border-white/15 bg-black/40"}`} onDragOver={(event) => { event.preventDefault(); setIsDragging(true); }} onDragLeave={() => setIsDragging(false)} onDrop={(event) => { event.preventDefault(); setIsDragging(false); const file = event.dataTransfer.files.item(0); if (file) loadFile(file); }}>
             <input ref={inputRef} className="sr-only" type="file" accept="image/*" onChange={(event) => { const file = event.target.files?.[0]; event.currentTarget.value = ""; if (file) loadFile(file); }} />
-            <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Upload image</p><p className="mt-1 text-xs text-slate-500">Drop, browse, or paste.</p></div><button type="button" onClick={() => inputRef.current?.click()} className="min-h-11 rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:-translate-y-px hover:bg-white/10 active:translate-y-0">Browse</button></div>
+            <div className="flex items-center justify-between gap-2"><div><p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Upload image</p><p className="mt-1 text-xs text-slate-500">Drop, browse, or paste.</p></div><div className="flex shrink-0 gap-2">{loadedImage ? <button type="button" onClick={removeImage} className="min-h-11 rounded-sm border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:-translate-y-px hover:border-rose-300/40 hover:bg-rose-300/10 hover:text-white active:translate-y-0">Remove</button> : null}<button type="button" onClick={() => inputRef.current?.click()} className="min-h-11 rounded-sm border border-white/10 bg-white/5 px-3 py-2 text-sm text-white transition hover:-translate-y-px hover:bg-white/10 active:translate-y-0">Browse</button></div></div>
           </div>
 
           <div className="space-y-2 rounded-md border border-white/10 bg-black/40 p-3">
